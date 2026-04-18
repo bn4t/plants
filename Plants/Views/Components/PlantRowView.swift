@@ -31,27 +31,26 @@ struct PlantRowView: View {
     }
 
     private var statusText: String {
-        if plant.daysUntilWatering < 0 {
-            let overdueDays = abs(plant.daysUntilWatering)
+        guard let days = plant.daysUntilWatering else {
+            return "Tap to water"
+        }
+
+        if days < 0 {
+            let overdueDays = abs(days)
             return "Overdue by \(overdueDays) \(overdueDays == 1 ? "day" : "days")"
         }
 
-        if plant.daysUntilWatering == 0 {
+        if days == 0 {
             return "Due today"
         }
 
-        return "Due in \(plant.daysUntilWatering) \(plant.daysUntilWatering == 1 ? "day" : "days")"
+        return "Due in \(days) \(days == 1 ? "day" : "days")"
     }
 
     private var statusColor: Color {
-        if plant.daysUntilWatering < 0 {
-            return .red
-        }
-
-        if plant.daysUntilWatering == 0 {
-            return .orange
-        }
-
+        guard let days = plant.daysUntilWatering else { return .orange }
+        if days < 0 { return .red }
+        if days == 0 { return .orange }
         return .secondary
     }
 }

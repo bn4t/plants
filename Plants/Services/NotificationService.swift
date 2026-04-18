@@ -176,7 +176,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, @un
         let id: UUID
         let commonName: String
         let wateringTrigger: String
-        let nextWateringDate: Date
+        let nextWateringDate: Date?
         let fertilizingNotes: String
         let nextFertilizingDate: Date?
 
@@ -204,7 +204,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, @un
             id: UUID,
             commonName: String,
             wateringTrigger: String,
-            nextWateringDate: Date,
+            nextWateringDate: Date?,
             fertilizingNotes: String,
             nextFertilizingDate: Date?
         ) {
@@ -218,6 +218,10 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, @un
     }
 
     private func scheduleWater(using snapshot: ReminderSnapshot) async {
+        guard let next = snapshot.nextWateringDate else {
+            cancel(id: waterID(for: snapshot.id))
+            return
+        }
         await schedule(
             id: waterID(for: snapshot.id),
             category: Self.waterCategory,
@@ -226,7 +230,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, @un
                 ? "Tap to mark as watered."
                 : "\(snapshot.wateringTrigger). Tap to mark as watered.",
             userInfo: ["plantId": snapshot.id.uuidString, "type": "water"],
-            fireAt: snapshot.nextWateringDate
+            fireAt: next
         )
     }
 

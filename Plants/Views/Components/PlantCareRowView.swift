@@ -9,12 +9,15 @@ struct PlantCareRowView: View {
     var onError: (String) -> Void = { _ in }
 
     private var waterDue: Bool {
-        plant.daysUntilWatering <= 0
+        if plant.needsInitialWatering { return true }
+        if let days = plant.daysUntilWatering, days <= 0 { return true }
+        return false
     }
 
     private var fertilizeDue: Bool {
-        guard let days = plant.daysUntilFertilizing else { return false }
-        return days <= 0
+        if plant.needsInitialFertilizing { return true }
+        if let days = plant.daysUntilFertilizing, days <= 0 { return true }
+        return false
     }
 
     var body: some View {
@@ -63,14 +66,17 @@ struct PlantCareRowView: View {
     private var captionText: String {
         let waterPart: String? = {
             guard waterDue else { return nil }
-            let days = plant.daysUntilWatering
+            if plant.needsInitialWatering { return "Needs first water" }
+            guard let days = plant.daysUntilWatering else { return nil }
             if days == 0 { return "Water due today" }
             let count = abs(days)
             return "Water overdue by \(count) \(count == 1 ? "day" : "days")"
         }()
 
         let fertilizePart: String? = {
-            guard fertilizeDue, let days = plant.daysUntilFertilizing else { return nil }
+            guard fertilizeDue else { return nil }
+            if plant.needsInitialFertilizing { return "needs first fertilizing" }
+            guard let days = plant.daysUntilFertilizing else { return nil }
             if days == 0 { return "fertilizer due today" }
             let count = abs(days)
             return "fertilizer overdue by \(count) \(count == 1 ? "day" : "days")"

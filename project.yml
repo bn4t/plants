@@ -10,10 +10,6 @@ options:
   groupSortPosition: top
   createIntermediateGroups: true
 
-configFiles:
-  Debug: Secrets.xcconfig
-  Release: Secrets.xcconfig
-
 settings:
   base:
     SWIFT_VERSION: 6.0
@@ -29,14 +25,10 @@ targets:
     deploymentTarget: "26.0"
     sources:
       - path: Plants
-        excludes:
-          - Resources/Assets.xcassets
-    resources:
-      - path: Plants/Resources/Assets.xcassets
     settings:
       base:
         PRODUCT_NAME: Plants
-        PRODUCT_BUNDLE_IDENTIFIER: ch.benrflect.plants
+        PRODUCT_BUNDLE_IDENTIFIER: me.bn4t.plants
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Plants/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

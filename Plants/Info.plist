@@ -6,6 +6,8 @@
     <string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key>
     <string>Plants</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
@@ -26,8 +28,6 @@
     <string>Used to take a photo of your plant so we can identify it and suggest a watering schedule.</string>
     <key>NSPhotoLibraryUsageDescription</key>
     <string>Used to pick an existing photo of your plant.</string>
-    <key>OPENROUTER_API_KEY</key>
-    <string>$(OPENROUTER_API_KEY)</string>
     <key>UIApplicationSceneManifest</key>
     <dict>
         <key>UIApplicationSupportsMultipleScenes</key>

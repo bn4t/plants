@@ -1,13 +1,23 @@
 import Foundation
 
 enum Secrets {
-    static var openRouterAPIKey: String {
-        guard let key = Bundle.main.object(forInfoDictionaryKey: "OPENROUTER_API_KEY") as? String,
-              !key.isEmpty
-        else {
-            fatalError("OPENROUTER_API_KEY missing from Info.plist / Secrets.xcconfig")
-        }
+    static let userDefaultsKey = "openRouterAPIKey"
 
-        return key
+    static var openRouterAPIKey: String? {
+        guard let value = UserDefaults.standard.string(forKey: userDefaultsKey),
+              !value.trimmingCharacters(in: .whitespaces).isEmpty
+        else {
+            return nil
+        }
+        return value
+    }
+
+    static func setOpenRouterAPIKey(_ value: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty {
+            UserDefaults.standard.removeObject(forKey: userDefaultsKey)
+        } else {
+            UserDefaults.standard.set(trimmed, forKey: userDefaultsKey)
+        }
     }
 }

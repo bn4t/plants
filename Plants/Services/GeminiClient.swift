@@ -33,6 +33,7 @@ struct PlantIdentification: Codable {
 }
 
 enum GeminiError: Error, LocalizedError {
+    case missingAPIKey
     case networkFailure(Error)
     case badStatus(Int)
     case emptyResponse
@@ -40,6 +41,8 @@ enum GeminiError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .missingAPIKey:
+            return "Add your OpenRouter API key in Settings before identifying a plant."
         case .networkFailure:
             return "Could not reach the plant identification service. Check your connection and try again."
         case .badStatus(let code):
@@ -129,9 +132,13 @@ actor GeminiClient {
             "stream": false
         ]
 
+        guard let apiKey = Secrets.openRouterAPIKey else {
+            throw GeminiError.missingAPIKey
+        }
+
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(Secrets.openRouterAPIKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 

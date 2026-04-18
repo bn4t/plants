@@ -173,9 +173,9 @@ struct PlantDetailView: View {
     #if DEBUG
     private func simulateOverdue() {
         let calendar = Calendar.current
-        plant.lastWatered = calendar.date(byAdding: .day, value: -(plant.wateringIntervalDays + 2), to: .now) ?? plant.lastWatered
+        plant.lastWatered = calendar.date(byAdding: .day, value: -(plant.wateringIntervalDays + 2), to: .now)
         if plant.fertilizingIntervalDays > 0 {
-            plant.lastFertilized = calendar.date(byAdding: .day, value: -(plant.fertilizingIntervalDays + 2), to: .now) ?? plant.lastFertilized
+            plant.lastFertilized = calendar.date(byAdding: .day, value: -(plant.fertilizingIntervalDays + 2), to: .now)
         }
         try? modelContext.save()
     }
@@ -183,17 +183,16 @@ struct PlantDetailView: View {
 
     private func seedInitialEventsIfNeeded() {
         var changed = false
-        let hasWaterEvent = plant.events.contains { $0.kind == CareEventKind.water.rawValue }
-        if !hasWaterEvent {
-            modelContext.insert(CareEvent(kind: .water, date: plant.lastWatered, plant: plant))
+        if let lastWatered = plant.lastWatered,
+           !plant.events.contains(where: { $0.kind == CareEventKind.water.rawValue }) {
+            modelContext.insert(CareEvent(kind: .water, date: lastWatered, plant: plant))
             changed = true
         }
-        if plant.fertilizingIntervalDays > 0 {
-            let hasFertEvent = plant.events.contains { $0.kind == CareEventKind.fertilize.rawValue }
-            if !hasFertEvent {
-                modelContext.insert(CareEvent(kind: .fertilize, date: plant.lastFertilized, plant: plant))
-                changed = true
-            }
+        if plant.fertilizingIntervalDays > 0,
+           let lastFertilized = plant.lastFertilized,
+           !plant.events.contains(where: { $0.kind == CareEventKind.fertilize.rawValue }) {
+            modelContext.insert(CareEvent(kind: .fertilize, date: lastFertilized, plant: plant))
+            changed = true
         }
         if changed {
             try? modelContext.save()

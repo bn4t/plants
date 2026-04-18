@@ -16,6 +16,7 @@ struct AddPlantView: View {
 
     @State private var step: Step = .pickingPhoto
     @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var photosPickerTapped = false
     @State private var capturedImage: UIImage?
     @State private var showingCamera = false
     @State private var currentPhotoData: Data?
@@ -92,35 +93,77 @@ struct AddPlantView: View {
     }
 
     private var pickingPhotoContent: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Button {
-                showingCamera = true
-            } label: {
-                Label("Take photo", systemImage: "camera")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
+        VStack(spacing: 24) {
+            VStack(spacing: 14) {
+                ZStack {
+                    Circle()
+                        .fill(Color.green.opacity(0.12))
+                        .frame(width: 128, height: 128)
 
-            PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
-                Label("Pick from library", systemImage: "photo.on.rectangle")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-
-            #if DEBUG
-            if debugSampleImagePath != nil {
-                Button {
-                    useDebugSampleImage()
-                } label: {
-                    Label("Use sample image", systemImage: "leaf")
-                        .frame(maxWidth: .infinity)
+                    Image(systemName: "leaf.fill")
+                        .font(.system(size: 56, weight: .semibold))
+                        .foregroundStyle(Color.green)
                 }
-                .buttonStyle(.bordered)
+
+                VStack(spacing: 6) {
+                    Text("Add a plant")
+                        .font(.title2.weight(.semibold))
+                    Text("Snap a photo and we'll identify it, then suggest a watering schedule.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 8)
+                }
             }
-            #endif
+            .frame(maxWidth: .infinity)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+
+            VStack(spacing: 12) {
+                PhotoActionTile(
+                    systemName: "camera.fill",
+                    title: "Take photo",
+                    subtitle: "Use the camera to capture your plant",
+                    tint: .green,
+                    isPrimary: true,
+                    isDisabled: !UIImagePickerController.isSourceTypeAvailable(.camera)
+                ) {
+                    showingCamera = true
+                }
+
+                PhotoActionTile(
+                    systemName: "photo.on.rectangle",
+                    title: "Pick from library",
+                    subtitle: "Choose an existing photo",
+                    tint: .blue,
+                    isPrimary: false,
+                    isDisabled: false
+                ) {
+                    photosPickerTapped = true
+                }
+                .photosPicker(
+                    isPresented: $photosPickerTapped,
+                    selection: $selectedPhotoItem,
+                    matching: .images
+                )
+
+                #if DEBUG
+                if debugSampleImagePath != nil {
+                    PhotoActionTile(
+                        systemName: "leaf",
+                        title: "Use sample image",
+                        subtitle: "Debug only",
+                        tint: .gray,
+                        isPrimary: false,
+                        isDisabled: false
+                    ) {
+                        useDebugSampleImage()
+                    }
+                }
+                #endif
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
     }
 
     private func identifyingContent(photoData: Data) -> some View {
@@ -406,6 +449,57 @@ struct AddPlantView: View {
         processSelectedImage(image)
     }
     #endif
+}
+
+private struct PhotoActionTile: View {
+    let systemName: String
+    let title: String
+    let subtitle: String
+    let tint: Color
+    let isPrimary: Bool
+    let isDisabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                ZStack {
+                    Circle()
+                        .fill(isPrimary ? Color.white.opacity(0.22) : tint.opacity(0.16))
+                        .frame(width: 42, height: 42)
+
+                    Image(systemName: systemName)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(isPrimary ? Color.white : tint)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundStyle(isPrimary ? Color.white : .primary)
+                    Text(subtitle)
+                        .font(.footnote)
+                        .foregroundStyle(isPrimary ? Color.white.opacity(0.85) : Color.secondary)
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(isPrimary ? Color.white.opacity(0.9) : Color.secondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(isPrimary ? tint : Color(.secondarySystemGroupedBackground))
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.5 : 1)
+    }
 }
 
 private struct FormSection<Content: View>: View {

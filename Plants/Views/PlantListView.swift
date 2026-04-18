@@ -6,15 +6,20 @@ struct PlantListView: View {
     @Query private var allPlants: [Plant]
 
     @State private var showingAddPlant = false
+    @State private var showingSettings = false
     @State private var plantPendingDelete: Plant?
     @State private var deleteErrorMessage: String?
 
     private var sortedPlants: [Plant] {
-        allPlants.sorted { $0.nextWateringDate < $1.nextWateringDate }
+        allPlants.sorted {
+            ($0.nextWateringDate ?? .distantPast) < ($1.nextWateringDate ?? .distantPast)
+        }
     }
 
     private func needsCare(_ plant: Plant) -> Bool {
-        if plant.daysUntilWatering <= 0 { return true }
+        if plant.needsInitialWatering { return true }
+        if let days = plant.daysUntilWatering, days <= 0 { return true }
+        if plant.needsInitialFertilizing { return true }
         if let days = plant.daysUntilFertilizing, days <= 0 { return true }
         return false
     }
@@ -43,6 +48,15 @@ struct PlantListView: View {
             .navigationTitle("Plants")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showingSettings = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                    .accessibilityLabel("Settings")
+                }
+
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showingAddPlant = true
@@ -55,6 +69,14 @@ struct PlantListView: View {
             .sheet(isPresented: $showingAddPlant) {
                 NavigationStack {
                     AddPlantView()
+                }
+            }
+            .sheet(isPresented: $showingSettings) {
+                SettingsView()
+            }
+            .onAppear {
+                if Secrets.openRouterAPIKey == nil {
+                    showingSettings = true
                 }
             }
             .alert(

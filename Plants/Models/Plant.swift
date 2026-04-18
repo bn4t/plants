@@ -14,11 +14,11 @@ final class Plant {
     var events: [CareEvent] = []
 
     var wateringIntervalDays: Int
-    var lastWatered: Date
+    var lastWatered: Date?
     var wateringTrigger: String
 
     var fertilizingIntervalDays: Int
-    var lastFertilized: Date
+    var lastFertilized: Date?
     var fertilizingNotes: String
 
     var lightRequirement: String
@@ -44,27 +44,29 @@ final class Plant {
         self.createdAt = .now
         self.photo = photo
         self.wateringIntervalDays = wateringIntervalDays
-        self.lastWatered = .now
+        self.lastWatered = nil
         self.wateringTrigger = wateringTrigger
         self.fertilizingIntervalDays = fertilizingIntervalDays
-        self.lastFertilized = .now
+        self.lastFertilized = nil
         self.fertilizingNotes = fertilizingNotes
         self.lightRequirement = lightRequirement
         self.toxicityNote = toxicityNote
         self.careNote = careNote
     }
 
-    var nextWateringDate: Date {
-        lastWatered.addingTimeInterval(TimeInterval(wateringIntervalDays) * 86_400)
+    var nextWateringDate: Date? {
+        guard let lastWatered else { return nil }
+        return lastWatered.addingTimeInterval(TimeInterval(wateringIntervalDays) * 86_400)
     }
 
     var nextFertilizingDate: Date? {
-        guard fertilizingIntervalDays > 0 else { return nil }
+        guard fertilizingIntervalDays > 0, let lastFertilized else { return nil }
         return lastFertilized.addingTimeInterval(TimeInterval(fertilizingIntervalDays) * 86_400)
     }
 
-    var daysUntilWatering: Int {
-        Calendar.current.dateComponents([.day], from: .now, to: nextWateringDate).day ?? 0
+    var daysUntilWatering: Int? {
+        guard let nextWateringDate else { return nil }
+        return Calendar.current.dateComponents([.day], from: .now, to: nextWateringDate).day ?? 0
     }
 
     var daysUntilFertilizing: Int? {
@@ -73,10 +75,20 @@ final class Plant {
     }
 
     var wateredToday: Bool {
-        Calendar.current.isDateInToday(lastWatered)
+        guard let lastWatered else { return false }
+        return Calendar.current.isDateInToday(lastWatered)
     }
 
     var fertilizedToday: Bool {
-        fertilizingIntervalDays > 0 && Calendar.current.isDateInToday(lastFertilized)
+        guard fertilizingIntervalDays > 0, let lastFertilized else { return false }
+        return Calendar.current.isDateInToday(lastFertilized)
+    }
+
+    var needsInitialWatering: Bool {
+        lastWatered == nil
+    }
+
+    var needsInitialFertilizing: Bool {
+        fertilizingIntervalDays > 0 && lastFertilized == nil
     }
 }
