@@ -1,0 +1,43 @@
+name: Plants
+
+configs:
+  Debug: debug
+  Release: release
+
+options:
+  deploymentTarget:
+    iOS: "26.0"
+  groupSortPosition: top
+  createIntermediateGroups: true
+
+configFiles:
+  Debug: Secrets.xcconfig
+  Release: Secrets.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: 6.0
+    TARGETED_DEVICE_FAMILY: 1
+    SUPPORTS_MACCATALYST: NO
+    MARKETING_VERSION: 1.0
+    CURRENT_PROJECT_VERSION: 1
+
+targets:
+  Plants:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: Plants
+        excludes:
+          - Resources/Assets.xcassets
+    resources:
+      - path: Plants/Resources/Assets.xcassets
+    settings:
+      base:
+        PRODUCT_NAME: Plants
+        PRODUCT_BUNDLE_IDENTIFIER: ch.benrflect.plants
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Plants/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor

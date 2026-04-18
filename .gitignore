@@ -1,0 +1,24 @@
+# Secrets
+Secrets.xcconfig
+*.env
+
+# macOS
+.DS_Store
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+DerivedData/
+build/
+
+# Swift Package Manager
+.build/
+Packages/
+Package.resolved
+.swiftpm/
+
+# Claude / tooling state
+.remember/
+.claude/
