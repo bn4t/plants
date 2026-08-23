@@ -13,6 +13,7 @@ final class Plant {
     @Relationship(deleteRule: .cascade, inverse: \CareEvent.plant)
     var events: [CareEvent] = []
 
+    // Kept for compatibility with the first shipped schema.
     var wateringIntervalDays: Int
     var lastWatered: Date?
     var wateringTrigger: String
@@ -25,6 +26,20 @@ final class Plant {
     var toxicityNote: String
     var careNote: String
 
+    // Species-level starting points. Observed watering cycles supersede these.
+    var wateringIntervalSpring: Int = 7
+    var wateringIntervalSummer: Int = 7
+    var wateringIntervalAutumn: Int = 7
+    var wateringIntervalWinter: Int = 7
+
+    // Kept so stores produced by the in-progress seasonal redesign remain readable.
+    var fertilizingPausedInWinter: Bool = true
+    var seasonalCareNote: String = ""
+
+    var nextCareCheckDate: Date?
+    var growthStateRaw: String = GrowthState.automatic.rawValue
+    var identificationConfidence: String = "unknown"
+
     init(
         id: UUID = UUID(),
         commonName: String,
@@ -36,59 +51,93 @@ final class Plant {
         fertilizingNotes: String = "",
         lightRequirement: String = "medium",
         toxicityNote: String = "",
-        careNote: String = ""
+        careNote: String = "",
+        seasonalWatering: SeasonalWatering? = nil,
+        fertilizingPausedInWinter: Bool = true,
+        seasonalCareNote: String = "",
+        nextCareCheckDate: Date? = nil,
+        growthState: GrowthState = .automatic,
+        identificationConfidence: String = "unknown",
+        createdAt: Date = .now
     ) {
         self.id = id
         self.commonName = commonName
         self.scientificName = scientificName
-        self.createdAt = .now
+        self.createdAt = createdAt
         self.photo = photo
-        self.wateringIntervalDays = wateringIntervalDays
+        self.wateringIntervalDays = wateringIntervalDays.clamped(to: 1...60)
         self.lastWatered = nil
         self.wateringTrigger = wateringTrigger
-        self.fertilizingIntervalDays = fertilizingIntervalDays
+        self.fertilizingIntervalDays = fertilizingIntervalDays.clamped(to: 0...120)
         self.lastFertilized = nil
         self.fertilizingNotes = fertilizingNotes
         self.lightRequirement = lightRequirement
         self.toxicityNote = toxicityNote
         self.careNote = careNote
+
+        let seasonal = seasonalWatering ?? SeasonalWatering.derived(from: wateringIntervalDays)
+        self.wateringIntervalSpring = seasonal.spring.clamped(to: 1...60)
+        self.wateringIntervalSummer = seasonal.summer.clamped(to: 1...60)
+        self.wateringIntervalAutumn = seasonal.autumn.clamped(to: 1...60)
+        self.wateringIntervalWinter = seasonal.winter.clamped(to: 1...60)
+        self.fertilizingPausedInWinter = fertilizingPausedInWinter
+        self.seasonalCareNote = seasonalCareNote
+        self.nextCareCheckDate = nextCareCheckDate
+        self.growthStateRaw = growthState.rawValue
+        self.identificationConfidence = identificationConfidence
     }
 
-    var nextWateringDate: Date? {
-        guard let lastWatered else { return nil }
-        return lastWatered.addingTimeInterval(TimeInterval(wateringIntervalDays) * 86_400)
+    var seasonalWatering: SeasonalWatering {
+        get {
+            let values = SeasonalWatering(
+                spring: wateringIntervalSpring,
+                summer: wateringIntervalSummer,
+                autumn: wateringIntervalAutumn,
+                winter: wateringIntervalWinter
+            )
+            if [values.spring, values.summer, values.autumn, values.winter].allSatisfy({ $0 > 0 }) {
+                return values.clamped
+            }
+            return SeasonalWatering.derived(from: wateringIntervalDays)
+        }
+        set {
+            let value = newValue.clamped
+            wateringIntervalSpring = value.spring
+            wateringIntervalSummer = value.summer
+            wateringIntervalAutumn = value.autumn
+            wateringIntervalWinter = value.winter
+            wateringIntervalDays = value.summer
+        }
     }
 
-    var nextFertilizingDate: Date? {
-        guard fertilizingIntervalDays > 0, let lastFertilized else { return nil }
-        return lastFertilized.addingTimeInterval(TimeInterval(fertilizingIntervalDays) * 86_400)
+    var growthState: GrowthState {
+        get { GrowthState(rawValue: growthStateRaw) ?? .automatic }
+        set { growthStateRaw = newValue.rawValue }
     }
 
-    var daysUntilWatering: Int? {
-        guard let nextWateringDate else { return nil }
-        return Calendar.current.dateComponents([.day], from: .now, to: nextWateringDate).day ?? 0
+    var soilCheckGuidance: String {
+        let trimmed = wateringTrigger.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Check the potting mix before watering" : trimmed
     }
 
-    var daysUntilFertilizing: Int? {
-        guard let nextFertilizingDate else { return nil }
-        return Calendar.current.dateComponents([.day], from: .now, to: nextFertilizingDate).day ?? 0
+    func careInput() -> CareRecommendationInput {
+        CareRecommendationInput(
+            seasonalWatering: seasonalWatering,
+            events: events.compactMap { event in
+                guard let kind = CareEventKind(rawValue: event.kind) else { return nil }
+                return CareEventSnapshot(kind: kind, date: event.date)
+            },
+            lastWatered: lastWatered,
+            lastFertilized: lastFertilized,
+            nextCareCheckDate: nextCareCheckDate,
+            fertilizingIntervalDays: fertilizingIntervalDays,
+            growthState: growthState
+        )
     }
+}
 
-    var wateredToday: Bool {
-        guard let lastWatered else { return false }
-        return Calendar.current.isDateInToday(lastWatered)
-    }
-
-    var fertilizedToday: Bool {
-        guard fertilizingIntervalDays > 0, let lastFertilized else { return false }
-        return Calendar.current.isDateInToday(lastFertilized)
-    }
-
-    var needsInitialWatering: Bool {
-        lastWatered == nil
-    }
-
-    var needsInitialFertilizing: Bool {
-        fertilizingIntervalDays > 0 && lastFertilized == nil
+private extension Comparable {
+    func clamped(to range: ClosedRange<Self>) -> Self {
+        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
     }
 }

@@ -1,56 +1,43 @@
 import SwiftUI
 
-struct PlantRowView: View {
+struct GardenPlantCard: View {
     let plant: Plant
+    let recommendation: CareRecommendation
 
     var body: some View {
-        HStack(spacing: 12) {
-            PlantPhotoView(photoData: plant.photo, cornerRadius: 12)
-                .frame(width: 60, height: 60)
+        VStack(alignment: .leading, spacing: 10) {
+            PlantPhotoView(photoData: plant.photo, cornerRadius: 18)
+                .aspectRatio(1, contentMode: .fit)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(plant.commonName.isEmpty ? "Unnamed plant" : plant.commonName)
                     .font(.headline)
-
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
                 if !plant.scientificName.isEmpty {
                     Text(plant.scientificName)
                         .font(.caption)
                         .italic()
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
+                Label(
+                    recommendation.displayStatus,
+                    systemImage: recommendation.status.isDue ? "exclamationmark.circle.fill" : "calendar"
+                )
+                .font(.caption.weight(.medium))
+                .foregroundStyle(recommendation.status.isDue ? BotanicalTheme.attention : .secondary)
+                .lineLimit(1)
             }
-
-            Spacer(minLength: 12)
-
-            Text(statusText)
-                .font(.caption)
-                .foregroundStyle(statusColor)
-                .multilineTextAlignment(.trailing)
         }
-        .padding(.vertical, 4)
-    }
-
-    private var statusText: String {
-        guard let days = plant.daysUntilWatering else {
-            return "Tap to water"
-        }
-
-        if days < 0 {
-            let overdueDays = abs(days)
-            return "Overdue by \(overdueDays) \(overdueDays == 1 ? "day" : "days")"
-        }
-
-        if days == 0 {
-            return "Due today"
-        }
-
-        return "Due in \(days) \(days == 1 ? "day" : "days")"
-    }
-
-    private var statusColor: Color {
-        guard let days = plant.daysUntilWatering else { return .orange }
-        if days < 0 { return .red }
-        if days == 0 { return .orange }
-        return .secondary
+        .padding(10)
+        .background(
+            BotanicalTheme.elevatedSurface,
+            in: RoundedRectangle(cornerRadius: BotanicalTheme.cardRadius, style: .continuous)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: BotanicalTheme.cardRadius, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(plant.commonName), \(recommendation.displayStatus)")
+        .accessibilityHint("Opens plant details")
     }
 }

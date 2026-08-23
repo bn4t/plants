@@ -1,197 +1,185 @@
 import SwiftData
 import SwiftUI
 
-struct PlantListView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var allPlants: [Plant]
+private enum GardenSort: String, CaseIterable, Identifiable {
+    case nextCheck
+    case name
+    case newest
 
-    @State private var showingAddPlant = false
-    @State private var showingSettings = false
-    @State private var plantPendingDelete: Plant?
-    @State private var deleteErrorMessage: String?
+    var id: String { rawValue }
 
-    private var sortedPlants: [Plant] {
-        allPlants.sorted {
-            ($0.nextWateringDate ?? .distantPast) < ($1.nextWateringDate ?? .distantPast)
+    var title: String {
+        switch self {
+        case .nextCheck: "Next check"
+        case .name: "Name"
+        case .newest: "Recently added"
         }
     }
 
-    private func needsCare(_ plant: Plant) -> Bool {
-        if plant.needsInitialWatering { return true }
-        if let days = plant.daysUntilWatering, days <= 0 { return true }
-        if plant.needsInitialFertilizing { return true }
-        if let days = plant.daysUntilFertilizing, days <= 0 { return true }
-        return false
+    var systemImage: String {
+        switch self {
+        case .nextCheck: "calendar"
+        case .name: "textformat"
+        case .newest: "clock"
+        }
     }
+}
 
-    private var needsCarePlants: [Plant] {
-        sortedPlants.filter(needsCare)
-    }
+struct PlantListView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.modelContext) private var modelContext
+    @Environment(AppSettings.self) private var settings
+    @Query private var plants: [Plant]
 
-    private var restPlants: [Plant] {
-        sortedPlants.filter { !needsCare($0) }
+    let namespace: Namespace.ID
+    let addPlant: () -> Void
+    let showSettings: () -> Void
+
+    @State private var searchText = ""
+    @State private var sort: GardenSort = .nextCheck
+    @State private var plantPendingDelete: Plant?
+    @State private var errorMessage: String?
+
+    private var visiblePlants: [Plant] {
+        let filtered = searchText.isEmpty
+            ? plants
+            : plants.filter {
+                $0.commonName.localizedCaseInsensitiveContains(searchText)
+                    || $0.scientificName.localizedCaseInsensitiveContains(searchText)
+            }
+        switch sort {
+        case .nextCheck:
+            return filtered.sorted {
+                recommendation(for: $0).dueDate < recommendation(for: $1).dueDate
+            }
+        case .name:
+            return filtered.sorted {
+                $0.commonName.localizedStandardCompare($1.commonName) == .orderedAscending
+            }
+        case .newest:
+            return filtered.sorted { $0.createdAt > $1.createdAt }
+        }
     }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if sortedPlants.isEmpty {
-                    ContentUnavailableView(
-                        "No plants yet",
-                        systemImage: "leaf",
-                        description: Text("Tap + to add your first plant.")
-                    )
-                } else {
-                    plantsList
+        Group {
+            if plants.isEmpty {
+                emptyState
+            } else if visiblePlants.isEmpty {
+                ContentUnavailableView.search(text: searchText)
+            } else {
+                ScrollView {
+                    LazyVGrid(
+                        columns: [GridItem(
+                            .adaptive(
+                                minimum: dynamicTypeSize.isAccessibilitySize ? 280 : 150,
+                                maximum: dynamicTypeSize.isAccessibilitySize ? 520 : 220
+                            ),
+                            spacing: 12
+                        )],
+                        spacing: 12
+                    ) {
+                        ForEach(visiblePlants) { plant in
+                            NavigationLink(value: plant.id) {
+                                GardenPlantCard(
+                                    plant: plant,
+                                    recommendation: recommendation(for: plant)
+                                )
+                                .matchedTransitionSource(id: plant.id, in: namespace)
+                            }
+                            .buttonStyle(.plain)
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    plantPendingDelete = plant
+                                } label: {
+                                    Label("Delete plant", systemImage: "trash")
+                                }
+                            }
+                        }
+                    }
+                    .padding(16)
                 }
             }
-            .navigationTitle("Plants")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        showingSettings = true
-                    } label: {
-                        Image(systemName: "gearshape")
-                    }
-                    .accessibilityLabel("Settings")
+        }
+        .background(BotanicalTheme.background)
+        .navigationTitle("Garden")
+        .searchable(text: $searchText, prompt: "Search plants")
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarLeading) {
+                Button(action: showSettings) {
+                    Image(systemName: "gearshape")
                 }
+                .accessibilityLabel("Settings")
+            }
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Menu {
+                    Picker("Sort plants", selection: $sort) {
+                        ForEach(GardenSort.allCases) { option in
+                            Label(option.title, systemImage: option.systemImage)
+                                .tag(option)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "arrow.up.arrow.down")
+                }
+                .accessibilityLabel("Sort plants")
+                .accessibilityValue(sort.title)
 
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showingAddPlant = true
-                    } label: {
-                        Image(systemName: "plus.circle.fill")
-                    }
-                    .accessibilityLabel("Add Plant")
+                Button(action: addPlant) {
+                    Image(systemName: "plus")
                 }
+                .accessibilityLabel("Add plant")
             }
-            .sheet(isPresented: $showingAddPlant) {
-                NavigationStack {
-                    AddPlantView()
-                }
-            }
-            .sheet(isPresented: $showingSettings) {
-                SettingsView()
-            }
-            .onAppear {
-                if Secrets.openRouterAPIKey == nil {
-                    showingSettings = true
-                }
-            }
-            .alert(
-                "Delete this plant?",
-                isPresented: deleteAlertBinding,
-                presenting: plantPendingDelete
-            ) { plant in
-                Button("Delete", role: .destructive) {
-                    delete(plant)
-                }
-                Button("Cancel", role: .cancel) {
-                    plantPendingDelete = nil
-                }
-            } message: { _ in
-                Text("This will cancel its reminders. This cannot be undone.")
-            }
-            .alert("Something went wrong", isPresented: errorAlertBinding) {
-                Button("OK", role: .cancel) {
-                    deleteErrorMessage = nil
-                }
-            } message: {
-                Text(deleteErrorMessage ?? "Unknown error")
-            }
+        }
+        .alert("Delete this plant?", isPresented: Binding(
+            get: { plantPendingDelete != nil },
+            set: { if !$0 { plantPendingDelete = nil } }
+        ), presenting: plantPendingDelete) { plant in
+            Button("Delete", role: .destructive) { delete(plant) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Its care history and pending reminder will also be removed.")
+        }
+        .alert("Could not delete plant", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "")
         }
     }
 
-    private var deleteAlertBinding: Binding<Bool> {
-        Binding(
-            get: { plantPendingDelete != nil },
-            set: { isPresented in
-                if !isPresented {
-                    plantPendingDelete = nil
-                }
+    private var emptyState: some View {
+        ContentUnavailableView {
+            Label("Grow Your Garden", systemImage: "leaf")
+        } description: {
+            Text("Add a photo to identify a plant, then get reminders to check its soil.")
+        } actions: {
+            Button(action: addPlant) {
+                Label("Add First Plant", systemImage: "camera.fill")
             }
-        )
+            .buttonStyle(.glassProminent)
+            .controlSize(.large)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var errorAlertBinding: Binding<Bool> {
-        Binding(
-            get: { deleteErrorMessage != nil },
-            set: { isPresented in
-                if !isPresented {
-                    deleteErrorMessage = nil
-                }
-            }
+    private func recommendation(for plant: Plant) -> CareRecommendation {
+        CareRecommendationEngine.recommendation(
+            for: plant.careInput(),
+            hemisphere: settings.hemisphere
         )
     }
 
     private func delete(_ plant: Plant) {
-        NotificationService.shared.cancelAll(for: plant.id)
+        NotificationService.shared.cancel(for: plant.id)
         modelContext.delete(plant)
-
         do {
             try modelContext.save()
             plantPendingDelete = nil
         } catch {
-            deleteErrorMessage = error.localizedDescription
-        }
-    }
-
-    @ViewBuilder
-    private var plantsList: some View {
-        let hasCare = !needsCarePlants.isEmpty
-        List {
-            if hasCare {
-                Section("Needs care") {
-                    ForEach(needsCarePlants) { plant in
-                        careRow(for: plant)
-                    }
-                }
-                Section("All plants") {
-                    ForEach(restPlants) { plant in
-                        plantRow(for: plant)
-                    }
-                }
-            } else {
-                ForEach(restPlants) { plant in
-                    plantRow(for: plant)
-                }
-            }
-        }
-        .listStyle(.insetGrouped)
-    }
-
-    @ViewBuilder
-    private func careRow(for plant: Plant) -> some View {
-        NavigationLink {
-            PlantDetailView(plant: plant)
-        } label: {
-            PlantCareRowView(plant: plant) { message in
-                deleteErrorMessage = message
-            }
-        }
-        .swipeActions(edge: .trailing) {
-            Button(role: .destructive) {
-                plantPendingDelete = plant
-            } label: {
-                Label("Delete", systemImage: "trash")
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func plantRow(for plant: Plant) -> some View {
-        NavigationLink {
-            PlantDetailView(plant: plant)
-        } label: {
-            PlantRowView(plant: plant)
-        }
-        .swipeActions(edge: .trailing) {
-            Button(role: .destructive) {
-                plantPendingDelete = plant
-            } label: {
-                Label("Delete", systemImage: "trash")
-            }
+            errorMessage = error.localizedDescription
         }
     }
 }

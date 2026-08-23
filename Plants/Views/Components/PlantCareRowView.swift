@@ -1,135 +1,47 @@
-import SwiftData
 import SwiftUI
-import UIKit
 
-struct PlantCareRowView: View {
-    @Environment(\.modelContext) private var modelContext
-
+struct CareTaskRow: View {
     let plant: Plant
-    var onError: (String) -> Void = { _ in }
-
-    private var waterDue: Bool {
-        if plant.needsInitialWatering { return true }
-        if let days = plant.daysUntilWatering, days <= 0 { return true }
-        return false
-    }
-
-    private var fertilizeDue: Bool {
-        if plant.needsInitialFertilizing { return true }
-        if let days = plant.daysUntilFertilizing, days <= 0 { return true }
-        return false
-    }
+    let recommendation: CareRecommendation
+    let showsCheckAction: Bool
+    let onCheck: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            PlantPhotoView(photoData: plant.photo, cornerRadius: 12)
-                .frame(width: 56, height: 56)
+        HStack(spacing: 14) {
+            HStack(spacing: 14) {
+                PlantPhotoView(photoData: plant.photo, cornerRadius: 14)
+                    .frame(width: 64, height: 64)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(plant.commonName.isEmpty ? "Unnamed plant" : plant.commonName)
-                    .font(.headline)
-                    .lineLimit(1)
-
-                Text(captionText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(plant.commonName.isEmpty ? "Unnamed plant" : plant.commonName)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                    Text(recommendation.displayStatus)
+                        .font(.subheadline.weight(recommendation.status.isDue ? .semibold : .regular))
+                        .foregroundStyle(recommendation.status.isDue ? BotanicalTheme.attention : .secondary)
+                    Text(plant.soilCheckGuidance)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(plant.commonName), \(recommendation.displayStatus), \(plant.soilCheckGuidance)")
+            .accessibilityHint("Opens plant details")
 
             Spacer(minLength: 8)
 
-            HStack(spacing: 8) {
-                if waterDue {
-                    CareActionButton(
-                        systemName: "drop.fill",
-                        tint: .blue,
-                        accessibilityLabel: "Mark \(plant.commonName) as watered"
-                    ) {
-                        await markWatered()
-                    }
-                }
-
-                if fertilizeDue {
-                    CareActionButton(
-                        systemName: "leaf.fill",
-                        tint: .green,
-                        accessibilityLabel: "Mark \(plant.commonName) as fertilized"
-                    ) {
-                        await markFertilized()
-                    }
-                }
+            if showsCheckAction {
+                Button("Check", action: onCheck)
+                    .buttonStyle(.borderedProminent)
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.small)
+                    .tint(BotanicalTheme.tint)
+                    .accessibilityLabel("Check \(plant.commonName)")
             }
         }
-        .padding(.vertical, 4)
-    }
-
-    private var captionText: String {
-        let waterPart: String? = {
-            guard waterDue else { return nil }
-            if plant.needsInitialWatering { return "Needs first water" }
-            guard let days = plant.daysUntilWatering else { return nil }
-            if days == 0 { return "Water due today" }
-            let count = abs(days)
-            return "Water overdue by \(count) \(count == 1 ? "day" : "days")"
-        }()
-
-        let fertilizePart: String? = {
-            guard fertilizeDue else { return nil }
-            if plant.needsInitialFertilizing { return "needs first fertilizing" }
-            guard let days = plant.daysUntilFertilizing else { return nil }
-            if days == 0 { return "fertilizer due today" }
-            let count = abs(days)
-            return "fertilizer overdue by \(count) \(count == 1 ? "day" : "days")"
-        }()
-
-        switch (waterPart, fertilizePart) {
-        case let (water?, fertilizer?):
-            return "\(water) · \(fertilizer)"
-        case let (water?, nil):
-            return water
-        case let (nil, fertilizer?):
-            return fertilizer.prefix(1).uppercased() + fertilizer.dropFirst()
-        case (nil, nil):
-            return ""
-        }
-    }
-
-    private func markWatered() async {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        do {
-            try await PlantCareActions.markWatered(plant, context: modelContext)
-        } catch {
-            onError(error.localizedDescription)
-        }
-    }
-
-    private func markFertilized() async {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        do {
-            try await PlantCareActions.markFertilized(plant, context: modelContext)
-        } catch {
-            onError(error.localizedDescription)
-        }
-    }
-}
-
-private struct CareActionButton: View {
-    let systemName: String
-    let tint: Color
-    let accessibilityLabel: String
-    let action: () async -> Void
-
-    var body: some View {
-        Button {
-            Task { await action() }
-        } label: {
-            Image(systemName: systemName)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 40, height: 40)
-                .background(tint.opacity(0.15), in: Circle())
-        }
-        .buttonStyle(.borderless)
-        .accessibilityLabel(accessibilityLabel)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .contain)
     }
 }

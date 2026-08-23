@@ -2,607 +2,574 @@ import PhotosUI
 import SwiftData
 import SwiftUI
 import UIKit
+import UserNotifications
+
+private enum AddPlantStep {
+    case choosePhoto
+    case connect(Data)
+    case identifying(Data)
+    case confirm(Data)
+    case failed(Data, String)
+}
+
+private enum LastWateredChoice: String, CaseIterable, Identifiable {
+    case unknown
+    case today
+    case anotherDate
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .unknown: "Not sure"
+        case .today: "Today"
+        case .anotherDate: "Choose date"
+        }
+    }
+}
 
 struct AddPlantView: View {
-    enum Step {
-        case pickingPhoto
-        case identifying(Data)
-        case confirming(Data, PlantIdentification)
-        case failed(Data, String)
-    }
-
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Environment(AppSettings.self) private var settings
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Query private var existingPlants: [Plant]
 
-    @State private var step: Step = .pickingPhoto
+    @State private var step: AddPlantStep = .choosePhoto
     @State private var selectedPhotoItem: PhotosPickerItem?
-    @State private var photosPickerTapped = false
     @State private var capturedImage: UIImage?
     @State private var showingCamera = false
-    @State private var currentPhotoData: Data?
-    @State private var draft = PlantDraft.empty
-    @State private var notificationsChecked = false
-    @State private var notificationsEnabled = false
-    @State private var saveErrorMessage: String?
-    @State private var processingErrorMessage: String?
-
-    #if DEBUG
-    private let debugSampleImagePath = ProcessInfo.processInfo.environment["PLANTS_DEBUG_SAMPLE_IMAGE"]
-    #endif
+    @State private var showingAdvanced = false
+    @State private var draft = PlantDraft(identification: .manualFallback)
+    @State private var lastWateredChoice: LastWateredChoice = .unknown
+    @State private var lastWateredDate = Date.now
+    @State private var isConnecting = false
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+    @State private var notificationPrimerPlant: Plant?
+    @State private var showingDiscardConfirmation = false
+    @State private var authService = OpenRouterAuthService()
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                if notificationsChecked && !notificationsEnabled {
-                    Text("Notifications are off. Enable them in Settings to get watering reminders.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .padding(16)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(.systemGroupedBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                }
+        Group {
+            switch step {
+            case .confirm(let photo):
+                confirmation(photo: photo)
+            default:
+                ScrollView {
+                    switch step {
+                    case .choosePhoto:
+                        photoChooser
+                    case .connect(let photo):
+                        connectionPrompt(photo: photo)
+                    case .identifying(let photo):
+                        identifying(photo: photo)
+                    case .failed(let photo, let message):
+                        failure(photo: photo, message: message)
+                    case .confirm:
+                        EmptyView()
+                    }
 
-                switch step {
-                case .pickingPhoto:
-                    pickingPhotoContent
-                case .identifying(let data):
-                    identifyingContent(photoData: data)
-                case .confirming(_, let result):
-                    confirmingContent(result: result)
-                case .failed(let data, let message):
-                    failedContent(photoData: data, message: message)
                 }
+                .contentMargins(16, for: .scrollContent)
             }
-            .padding(20)
         }
+        .background(BotanicalTheme.background)
         .navigationTitle("Add Plant")
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            await requestNotificationPermissionIfNeeded()
-        }
-        .onChange(of: selectedPhotoItem, initial: false) { _, newValue in
-            guard let newValue else { return }
-
-            Task {
-                await loadPhoto(from: newValue)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel", action: cancel)
+            }
+            if case .confirm = step {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { Task { await save() } }
+                        .fontWeight(.semibold)
+                        .disabled(!canSave || isSaving)
+                }
             }
         }
-        .onChange(of: capturedImage, initial: false) { _, newValue in
-            guard let newValue else { return }
-
-            processSelectedImage(newValue)
+        .onChange(of: selectedPhotoItem) { _, item in
+            guard let item else { return }
+            Task { await loadPhoto(item) }
         }
+        .onChange(of: capturedImage) { _, image in
+            guard let image else { return }
+            use(image)
+        }
+        .interactiveDismissDisabled(hasProgress)
         .fullScreenCover(isPresented: $showingCamera) {
             CameraPicker(image: $capturedImage)
+                .ignoresSafeArea()
         }
-        .alert("Could not save plant", isPresented: saveErrorBinding) {
-            Button("OK", role: .cancel) {
-                saveErrorMessage = nil
+        .sheet(item: $notificationPrimerPlant) { plant in
+            NotificationPrimerView(plant: plant) {
+                notificationPrimerPlant = nil
+                dismiss()
             }
-        } message: {
-            Text(saveErrorMessage ?? "Unknown error")
+            .interactiveDismissDisabled()
         }
-        .alert("Could not use photo", isPresented: processingErrorBinding) {
-            Button("OK", role: .cancel) {
-                processingErrorMessage = nil
-            }
+        .alert("Could not continue", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
         } message: {
-            Text(processingErrorMessage ?? "Unknown error")
+            Text(errorMessage ?? "")
+        }
+        .confirmationDialog(
+            "Discard this plant?",
+            isPresented: $showingDiscardConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Discard Plant", role: .destructive) { dismiss() }
+            Button("Keep Editing", role: .cancel) {}
+        } message: {
+            Text("The selected photo, identification result, and any edits will be lost.")
         }
     }
 
-    private var pickingPhotoContent: some View {
+    private var photoChooser: some View {
         VStack(spacing: 24) {
-            VStack(spacing: 14) {
-                ZStack {
-                    Circle()
-                        .fill(Color.green.opacity(0.12))
-                        .frame(width: 128, height: 128)
-
-                    Image(systemName: "leaf.fill")
-                        .font(.system(size: 56, weight: .semibold))
-                        .foregroundStyle(Color.green)
-                }
-
-                VStack(spacing: 6) {
-                    Text("Add a plant")
-                        .font(.title2.weight(.semibold))
-                    Text("Snap a photo and we'll identify it, then suggest a watering schedule.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 8)
-                }
+            Spacer(minLength: 24)
+            ZStack {
+                RoundedRectangle(cornerRadius: 32, style: .continuous)
+                    .fill(BotanicalTheme.tint.opacity(0.1))
+                    .aspectRatio(4 / 3, contentMode: .fit)
+                    .frame(maxHeight: dynamicTypeSize.isAccessibilitySize ? 210 : 280)
+                Image(systemName: "camera.macro")
+                    .font(.system(size: 72, weight: .light))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(BotanicalTheme.tint)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 8)
-            .padding(.bottom, 4)
+            .accessibilityHidden(true)
 
-            VStack(spacing: 12) {
-                PhotoActionTile(
-                    systemName: "camera.fill",
-                    title: "Take photo",
-                    subtitle: "Use the camera to capture your plant",
-                    tint: .green,
-                    isPrimary: true,
-                    isDisabled: !UIImagePickerController.isSourceTypeAvailable(.camera)
-                ) {
+            VStack(spacing: 8) {
+                Text("Start with a clear photo")
+                    .font(.title2.bold())
+                Text("Fill the frame with the leaves and photograph the plant in good light.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+                Label("Choose Photo", systemImage: "photo.on.rectangle")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.glassProminent)
+            .controlSize(.large)
+
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button {
                     showingCamera = true
-                }
-
-                PhotoActionTile(
-                    systemName: "photo.on.rectangle",
-                    title: "Pick from library",
-                    subtitle: "Choose an existing photo",
-                    tint: .blue,
-                    isPrimary: false,
-                    isDisabled: false
-                ) {
-                    photosPickerTapped = true
-                }
-                .photosPicker(
-                    isPresented: $photosPickerTapped,
-                    selection: $selectedPhotoItem,
-                    matching: .images
-                )
-
-                #if DEBUG
-                if debugSampleImagePath != nil {
-                    PhotoActionTile(
-                        systemName: "leaf",
-                        title: "Use sample image",
-                        subtitle: "Debug only",
-                        tint: .gray,
-                        isPrimary: false,
-                        isDisabled: false
-                    ) {
-                        useDebugSampleImage()
-                    }
-                }
-                #endif
-            }
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func identifyingContent(photoData: Data) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            PlantPhotoView(photoData: photoData)
-                .frame(maxWidth: .infinity)
-                .frame(height: 220)
-
-            HStack(spacing: 12) {
-                ProgressView()
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Identifying plant…")
-                        .font(.headline)
-                    Text("This usually takes a few seconds.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.systemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        }
-    }
-
-    private func confirmingContent(result: PlantIdentification) -> some View {
-        VStack(alignment: .leading, spacing: 20) {
-            PlantPhotoView(photoData: currentPhotoData)
-                .frame(maxWidth: .infinity)
-                .frame(height: 220)
-
-            if result.confidence == "low" {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                    Text("Confidence is low. Double-check the details below.")
-                        .font(.subheadline)
-                        .foregroundStyle(.primary)
-                }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.yellow.opacity(0.18))
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            }
-
-            FormSection(title: "Identity") {
-                LabeledField(label: "Common name") {
-                    PlainTextField(placeholder: "e.g. Swiss Cheese Plant", text: $draft.commonName)
-                }
-                LabeledField(label: "Scientific name") {
-                    PlainTextField(placeholder: "e.g. Monstera deliciosa", text: $draft.scientificName, italic: true)
-                }
-            }
-
-            FormSection(title: "Watering") {
-                LabeledField(label: "Every") {
-                    IntervalStepper(value: $draft.wateringIntervalDays, range: 1...60, unit: "days")
-                }
-                LabeledField(label: "When") {
-                    PlainTextField(
-                        placeholder: "e.g. top 2–3 cm of soil feels dry",
-                        text: $draft.wateringTrigger,
-                        axis: .vertical,
-                        lineLimit: 2...4
-                    )
-                }
-            }
-
-            FormSection(title: "Fertilizing") {
-                Toggle("Enable fertilizing reminders", isOn: $draft.isFertilizingEnabled)
-                    .tint(.green)
-
-                if draft.isFertilizingEnabled {
-                    LabeledField(label: "Every") {
-                        IntervalStepper(value: $draft.fertilizingIntervalDays, range: 7...120, unit: "days")
-                    }
-                    LabeledField(label: "Notes") {
-                        PlainTextField(
-                            placeholder: "e.g. balanced liquid feed in spring and summer",
-                            text: $draft.fertilizingNotes,
-                            axis: .vertical,
-                            lineLimit: 2...4
-                        )
-                    }
-                }
-            }
-
-            FormSection(title: "Light") {
-                Picker("Light", selection: $draft.lightRequirement) {
-                    Text("Low").tag("low")
-                    Text("Medium").tag("medium")
-                    Text("Indirect").tag("bright_indirect")
-                    Text("Direct").tag("direct_sun")
-                }
-                .pickerStyle(.segmented)
-            }
-
-            FormSection(title: "Notes") {
-                LabeledField(label: "Toxicity") {
-                    PlainTextField(
-                        placeholder: "e.g. mildly toxic to pets if ingested",
-                        text: $draft.toxicityNote,
-                        axis: .vertical,
-                        lineLimit: 2...5
-                    )
-                }
-                LabeledField(label: "Care") {
-                    PlainTextField(
-                        placeholder: "e.g. wipe leaves; provide a moss pole",
-                        text: $draft.careNote,
-                        axis: .vertical,
-                        lineLimit: 2...5
-                    )
-                }
-            }
-
-            VStack(spacing: 10) {
-                Button {
-                    Task { await savePlant() }
                 } label: {
-                    Text("Save plant")
-                        .fontWeight(.semibold)
+                    Label("Take Photo", systemImage: "camera.fill")
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(draft.commonName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                Button {
-                    step = .pickingPhoto
-                } label: {
-                    Text("Use a different photo")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 4)
-                }
-                .buttonStyle(.bordered)
+                .buttonStyle(.glass)
                 .controlSize(.large)
             }
-            .padding(.top, 4)
+
+            Button {
+                draft = PlantDraft(identification: .manualFallback)
+                step = .confirm(Data())
+            } label: {
+                Label("Enter details without a photo", systemImage: "square.and.pencil")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(BotanicalTheme.tint)
         }
     }
 
-    private func failedContent(photoData: Data, message: String) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            PlantPhotoView(photoData: photoData)
-                .frame(maxWidth: .infinity)
-                .frame(height: 200)
-
-            Text(message)
-                .foregroundStyle(.red)
-
-            HStack(spacing: 12) {
-                Button("Try again") {
-                    resetToPicking()
+    private func connectionPrompt(photo: Data) -> some View {
+        VStack(spacing: 20) {
+            photoPreview(photo, height: previewHeight(regular: 260))
+            ContentUnavailableView {
+                Label("Connect for plant identification", systemImage: "sparkles")
+            } description: {
+                Text("Sign in to OpenRouter once. Plants receives a user-controlled key securely, with no copy and paste.")
+            } actions: {
+                Button {
+                    Task { await connectAndIdentify(photo: photo) }
+                } label: {
+                    if isConnecting {
+                        ProgressView()
+                    } else {
+                        Label("Connect OpenRouter", systemImage: "person.crop.circle.badge.checkmark")
+                    }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent)
+                .disabled(isConnecting)
 
-                Button("Enter manually") {
+                Button {
                     draft = PlantDraft(identification: .manualFallback)
-                    step = .confirming(photoData, .manualFallback)
+                    step = .confirm(photo)
+                } label: {
+                    Label("Enter details manually", systemImage: "square.and.pencil")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.glass)
             }
         }
     }
 
-    private var saveErrorBinding: Binding<Bool> {
+    private func identifying(photo: Data) -> some View {
+        VStack(spacing: 18) {
+            ZStack {
+                photoPreview(photo, height: previewHeight(regular: 280))
+                Rectangle()
+                    .fill(.black.opacity(0.28))
+                    .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                ProgressView()
+                    .controlSize(.large)
+                    .tint(.white)
+            }
+
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Identifying your plant")
+                    .font(.title3.bold())
+                Text("Swiss Cheese Plant")
+                    .font(.headline)
+                Text("Monstera deliciosa")
+                    .font(.subheadline)
+                Text("Preparing an adaptive care plan")
+                    .font(.body)
+            }
+            .contentSurface()
+            .redacted(reason: .placeholder)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Identifying plant")
+        }
+    }
+
+    private func confirmation(photo: Data) -> some View {
+        Form {
+            if !photo.isEmpty {
+                Section {
+                    photoPreview(photo, height: previewHeight(regular: 230))
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                }
+            }
+
+            if draft.confidence == .low {
+                Section {
+                    Label(
+                        "Identification confidence is low. Check the name before saving.",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.orange)
+                }
+            }
+
+            Section {
+                TextField("Common name", text: $draft.commonName)
+                TextField("Scientific name", text: $draft.scientificName)
+                    .textInputAutocapitalization(.never)
+                TextField("When is the potting mix dry enough?", text: $draft.wateringTrigger, axis: .vertical)
+            } header: {
+                Label("Identity and soil trigger", systemImage: "leaf")
+            }
+
+            Section {
+                Picker("When?", selection: $lastWateredChoice) {
+                    ForEach(LastWateredChoice.allCases) { choice in
+                        Text(choice.title).tag(choice)
+                    }
+                }
+                if lastWateredChoice == .anotherDate {
+                    DatePicker("Date", selection: $lastWateredDate, in: ...Date.now, displayedComponents: .date)
+                }
+                Text(lastWateredChoice == .unknown
+                     ? "Plants will ask you to check the soil today."
+                     : "This starts the first soil-check estimate.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Label("Last watered", systemImage: "drop")
+            }
+
+            Section {
+                DisclosureGroup("Advanced care plan", isExpanded: $showingAdvanced) {
+                    SeasonStrip(
+                        current: Season.current(hemisphere: settings.hemisphere),
+                        intervals: draft.seasonalWatering
+                    )
+                    ForEach(Season.allCases, id: \.self) { season in
+                        seasonalStepper(season)
+                    }
+                    Divider()
+                    Stepper(
+                        draft.fertilizingInterval == 0
+                            ? "No feeding reminders"
+                            : "Feed every \(draft.fertilizingInterval) days while growing",
+                        value: $draft.fertilizingInterval,
+                        in: 0...120,
+                        step: 7
+                    )
+                    TextField("Feeding guidance", text: $draft.fertilizingNotes, axis: .vertical)
+                    TextField("General care note", text: $draft.careNote, axis: .vertical)
+                }
+            } footer: {
+                Text("Review the name and soil trigger, then tap Save.")
+            }
+        }
+        .scrollContentBackground(.hidden)
+    }
+
+    private func failure(photo: Data, message: String) -> some View {
+        VStack(spacing: 20) {
+            photoPreview(photo, height: previewHeight(regular: 260))
+            ContentUnavailableView {
+                Label("Identification did not finish", systemImage: "wifi.exclamationmark")
+            } description: {
+                Text(message)
+            } actions: {
+                Button {
+                    Task { await identify(photo: photo) }
+                } label: {
+                    Label("Try Again", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.glassProminent)
+                Button {
+                    draft = PlantDraft(identification: .manualFallback)
+                    step = .confirm(photo)
+                } label: {
+                    Label("Enter details manually", systemImage: "square.and.pencil")
+                }
+                .buttonStyle(.glass)
+            }
+        }
+    }
+
+    private var canSave: Bool {
+        !draft.commonName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !draft.wateringTrigger.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var hasProgress: Bool {
+        switch step {
+        case .identifying, .confirm, .failed:
+            true
+        case .choosePhoto, .connect:
+            false
+        }
+    }
+
+    private func cancel() {
+        if hasProgress {
+            showingDiscardConfirmation = true
+        } else {
+            dismiss()
+        }
+    }
+
+    private func photoPreview(_ data: Data, height: CGFloat) -> some View {
+        PlantPhotoView(photoData: data.isEmpty ? nil : data, cornerRadius: 28)
+            .frame(height: height)
+    }
+
+    private func previewHeight(regular: CGFloat) -> CGFloat {
+        dynamicTypeSize.isAccessibilitySize ? min(regular, 200) : regular
+    }
+
+    private func seasonalStepper(_ season: Season) -> some View {
+        Stepper(value: seasonalIntervalBinding(for: season), in: 1...60) {
+            Label(
+                "\(season.displayName): \(draft.seasonalWatering.interval(for: season)) days",
+                systemImage: season.systemImage
+            )
+            .font(.subheadline)
+        }
+    }
+
+    private func seasonalIntervalBinding(for season: Season) -> Binding<Int> {
         Binding(
-            get: { saveErrorMessage != nil },
-            set: { isPresented in
-                if !isPresented {
-                    saveErrorMessage = nil
+            get: { draft.seasonalWatering.interval(for: season) },
+            set: { value in
+                switch season {
+                case .spring: draft.seasonalWatering.spring = value
+                case .summer: draft.seasonalWatering.summer = value
+                case .autumn: draft.seasonalWatering.autumn = value
+                case .winter: draft.seasonalWatering.winter = value
                 }
             }
         )
     }
 
-    private var processingErrorBinding: Binding<Bool> {
-        Binding(
-            get: { processingErrorMessage != nil },
-            set: { isPresented in
-                if !isPresented {
-                    processingErrorMessage = nil
-                }
-            }
-        )
-    }
-
-    private func requestNotificationPermissionIfNeeded() async {
-        guard !notificationsChecked else { return }
-
-        let granted = await NotificationService.shared.requestPermissionIfNeeded()
-        notificationsEnabled = granted
-        notificationsChecked = true
-    }
-
-    private func loadPhoto(from item: PhotosPickerItem) async {
+    private func loadPhoto(_ item: PhotosPickerItem) async {
         do {
             guard let data = try await item.loadTransferable(type: Data.self),
                   let image = UIImage(data: data)
             else {
-                processingErrorMessage = "Could not load the selected photo."
-                return
+                throw AddPlantError.unreadablePhoto
             }
-
-            processSelectedImage(image)
+            await MainActor.run { use(image) }
         } catch {
-            processingErrorMessage = error.localizedDescription
+            errorMessage = error.localizedDescription
         }
     }
 
-    private func processSelectedImage(_ image: UIImage) {
-        guard let processedData = PhotoProcessor.process(image) else {
-            processingErrorMessage = "Could not prepare the selected photo."
+    private func use(_ image: UIImage) {
+        guard let data = PhotoProcessor.process(image) else {
+            errorMessage = AddPlantError.unreadablePhoto.localizedDescription
             return
         }
-
-        currentPhotoData = processedData
-        step = .identifying(processedData)
-
-        Task {
-            await identifyPlant(using: processedData)
+        if Secrets.hasOpenRouterAPIKey {
+            Task { await identify(photo: data) }
+        } else {
+            step = .connect(data)
         }
     }
 
-    private func identifyPlant(using photoData: Data) async {
+    private func connectAndIdentify(photo: Data) async {
+        isConnecting = true
+        defer { isConnecting = false }
         do {
-            let result = try await GeminiClient.shared.identify(imageJPEG: photoData)
-            draft = PlantDraft(identification: result)
-            step = .confirming(photoData, result)
+            try await authService.connect()
+            await identify(photo: photo)
+        } catch OpenRouterConnectionError.cancelled {
+            return
         } catch {
-            step = .failed(photoData, error.localizedDescription)
+            errorMessage = error.localizedDescription
         }
     }
 
-    private func savePlant() async {
+    private func identify(photo: Data) async {
+        step = .identifying(photo)
+        do {
+            let result = try await GeminiClient.shared.identify(
+                imageJPEG: photo,
+                hemisphere: settings.hemisphere
+            )
+            draft = PlantDraft(identification: result)
+            step = .confirm(photo)
+        } catch is CancellationError {
+            return
+        } catch {
+            step = .failed(photo, error.localizedDescription)
+        }
+    }
+
+    private func save() async {
+        guard canSave else { return }
+        isSaving = true
+        defer { isSaving = false }
+        let isFirstPlant = existingPlants.isEmpty
+
+        let photo: Data?
+        if case .confirm(let data) = step, !data.isEmpty {
+            photo = data
+        } else {
+            photo = nil
+        }
         let plant = Plant(
             commonName: draft.commonName.trimmingCharacters(in: .whitespacesAndNewlines),
             scientificName: draft.scientificName.trimmingCharacters(in: .whitespacesAndNewlines),
-            photo: currentPhotoData,
-            wateringIntervalDays: draft.wateringIntervalDays,
+            photo: photo,
+            wateringIntervalDays: draft.seasonalWatering.summer,
             wateringTrigger: draft.wateringTrigger.trimmingCharacters(in: .whitespacesAndNewlines),
-            fertilizingIntervalDays: draft.isFertilizingEnabled ? draft.fertilizingIntervalDays : 0,
+            fertilizingIntervalDays: draft.fertilizingInterval,
             fertilizingNotes: draft.fertilizingNotes.trimmingCharacters(in: .whitespacesAndNewlines),
             lightRequirement: draft.lightRequirement,
-            toxicityNote: draft.toxicityNote.trimmingCharacters(in: .whitespacesAndNewlines),
-            careNote: draft.careNote.trimmingCharacters(in: .whitespacesAndNewlines)
+            toxicityNote: draft.toxicityNote,
+            careNote: draft.careNote.trimmingCharacters(in: .whitespacesAndNewlines),
+            seasonalWatering: draft.seasonalWatering,
+            identificationConfidence: draft.confidence.rawValue
         )
 
+        let lastWatered: Date?
+        switch lastWateredChoice {
+        case .unknown: lastWatered = nil
+        case .today: lastWatered = .now
+        case .anotherDate: lastWatered = lastWateredDate
+        }
+        plant.lastWatered = lastWatered
+        let season = Season.current(hemisphere: settings.hemisphere)
+        plant.nextCareCheckDate = CareRecommendationEngine.reminderDate(
+            addingDays: lastWatered == nil ? 0 : draft.seasonalWatering.interval(for: season),
+            to: lastWatered ?? .now,
+            hour: settings.reminderHour,
+            minute: settings.reminderMinute
+        )
         modelContext.insert(plant)
+        if let lastWatered {
+            modelContext.insert(CareEvent(kind: .watering, date: lastWatered, plant: plant))
+        }
 
         do {
             try modelContext.save()
-
-            if notificationsEnabled {
-                await NotificationService.shared.scheduleWater(for: plant)
-                await NotificationService.shared.scheduleFertilize(for: plant)
-            }
-
-            dismiss()
-        } catch {
-            saveErrorMessage = error.localizedDescription
-        }
-    }
-
-    private func resetToPicking() {
-        selectedPhotoItem = nil
-        capturedImage = nil
-        currentPhotoData = nil
-        step = .pickingPhoto
-    }
-
-    #if DEBUG
-    private func useDebugSampleImage() {
-        guard let debugSampleImagePath,
-              let image = UIImage(contentsOfFile: debugSampleImagePath)
-        else {
-            processingErrorMessage = "Could not load the sample image."
-            return
-        }
-
-        processSelectedImage(image)
-    }
-    #endif
-}
-
-private struct PhotoActionTile: View {
-    let systemName: String
-    let title: String
-    let subtitle: String
-    let tint: Color
-    let isPrimary: Bool
-    let isDisabled: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                ZStack {
-                    Circle()
-                        .fill(isPrimary ? Color.white.opacity(0.22) : tint.opacity(0.16))
-                        .frame(width: 42, height: 42)
-
-                    Image(systemName: systemName)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(isPrimary ? Color.white : tint)
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.headline)
-                        .foregroundStyle(isPrimary ? Color.white : .primary)
-                    Text(subtitle)
-                        .font(.footnote)
-                        .foregroundStyle(isPrimary ? Color.white.opacity(0.85) : Color.secondary)
-                }
-
-                Spacer(minLength: 8)
-
-                Image(systemName: "chevron.right")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(isPrimary ? Color.white.opacity(0.9) : Color.secondary)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(isPrimary ? tint : Color(.secondarySystemGroupedBackground))
+            await NotificationService.shared.scheduleSoilCheck(
+                for: plant,
+                settings: settings.snapshot
             )
-        }
-        .buttonStyle(.plain)
-        .disabled(isDisabled)
-        .opacity(isDisabled ? 0.5 : 1)
-    }
-}
-
-private struct FormSection<Content: View>: View {
-    let title: String
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(title.uppercased())
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .tracking(0.6)
-
-            content
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.systemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-}
-
-private struct LabeledField<Content: View>: View {
-    let label: String
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            content
-        }
-    }
-}
-
-private struct PlainTextField: View {
-    let placeholder: String
-    @Binding var text: String
-    var axis: Axis = .horizontal
-    var lineLimit: ClosedRange<Int>? = nil
-    var italic: Bool = false
-
-    var body: some View {
-        Group {
-            if axis == .vertical {
-                TextField(placeholder, text: $text, axis: .vertical)
-                    .lineLimit(lineLimit ?? 1...1)
+            let status = await NotificationService.shared.authorizationStatus()
+            if isFirstPlant && status == .notDetermined {
+                notificationPrimerPlant = plant
             } else {
-                TextField(placeholder, text: $text)
+                dismiss()
             }
+        } catch {
+            errorMessage = error.localizedDescription
         }
-        .italic(italic)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
     }
 }
 
-private struct IntervalStepper: View {
-    @Binding var value: Int
-    let range: ClosedRange<Int>
-    let unit: String
+private struct NotificationPrimerView: View {
+    @Environment(AppSettings.self) private var settings
+    let plant: Plant
+    let finished: () -> Void
+    @State private var isRequesting = false
 
     var body: some View {
-        HStack(spacing: 14) {
-            Button {
-                if value > range.lowerBound { value -= 1 }
-            } label: {
-                Image(systemName: "minus")
-                    .font(.body.weight(.semibold))
-                    .frame(width: 36, height: 36)
-            }
-            .buttonStyle(.bordered)
-            .buttonBorderShape(.circle)
-            .disabled(value <= range.lowerBound)
-
-            VStack(spacing: 0) {
-                Text("\(value)")
-                    .font(.system(size: 28, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                Text(unit)
-                    .font(.caption)
+        NavigationStack {
+            VStack(spacing: 24) {
+                Spacer()
+                Image(systemName: "bell.badge.fill")
+                    .font(.system(size: 64))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(BotanicalTheme.tint)
+                VStack(spacing: 8) {
+                    Text("Remember the next soil check")
+                        .font(.title2.bold())
+                    Text("Plants can remind you when it is time to check \(plant.commonName). It will never tell you to water without checking first.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                Spacer()
+                Button {
+                    Task {
+                        isRequesting = true
+                        let granted = await NotificationService.shared.requestPermission()
+                        if granted {
+                            await NotificationService.shared.scheduleSoilCheck(
+                                for: plant,
+                                settings: settings.snapshot
+                            )
+                        }
+                        isRequesting = false
+                        finished()
+                    }
+                } label: {
+                    if isRequesting {
+                        ProgressView().frame(maxWidth: .infinity)
+                    } else {
+                        Label("Enable Reminders", systemImage: "bell.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .buttonStyle(.glassProminent)
+                .controlSize(.large)
+                .disabled(isRequesting)
+                Button("Not now", action: finished)
+                    .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
             }
-            .frame(maxWidth: .infinity)
-
-            Button {
-                if value < range.upperBound { value += 1 }
-            } label: {
-                Image(systemName: "plus")
-                    .font(.body.weight(.semibold))
-                    .frame(width: 36, height: 36)
-            }
-            .buttonStyle(.bordered)
-            .buttonBorderShape(.circle)
-            .disabled(value >= range.upperBound)
+            .padding(24)
+            .navigationTitle("Reminders")
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }
@@ -610,27 +577,34 @@ private struct IntervalStepper: View {
 private struct PlantDraft {
     var commonName: String
     var scientificName: String
-    var wateringIntervalDays: Int
+    var confidence: IdentificationConfidence
     var wateringTrigger: String
-    var isFertilizingEnabled: Bool
-    var fertilizingIntervalDays: Int
+    var seasonalWatering: SeasonalWatering
+    var fertilizingInterval: Int
     var fertilizingNotes: String
     var lightRequirement: String
     var toxicityNote: String
     var careNote: String
 
-    static let empty = PlantDraft(identification: .manualFallback)
-
     init(identification: PlantIdentification) {
         commonName = identification.commonName
         scientificName = identification.scientificName
-        wateringIntervalDays = min(max(identification.suggestedWateringInterval, 1), 60)
+        confidence = identification.confidence
         wateringTrigger = identification.wateringTrigger
-        isFertilizingEnabled = identification.fertilizingIntervalDaysGrowingSeason > 0
-        fertilizingIntervalDays = max(identification.fertilizingIntervalDaysGrowingSeason, 7)
+        seasonalWatering = identification.seasonalWatering
+        fertilizingInterval = identification.fertilizingIntervalDaysGrowingSeason
         fertilizingNotes = identification.fertilizingNotes
         lightRequirement = identification.lightRequirement
         toxicityNote = identification.toxicityNote
         careNote = identification.careNote
+    }
+
+}
+
+private enum AddPlantError: LocalizedError {
+    case unreadablePhoto
+
+    var errorDescription: String? {
+        "That photo could not be read. Try another image."
     }
 }

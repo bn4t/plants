@@ -33,3 +33,29 @@ targets:
         INFOPLIST_FILE: Plants/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+
+  PlantsTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: PlantsTests
+    dependencies:
+      - target: Plants
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: me.bn4t.plants.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  Plants:
+    build:
+      targets:
+        Plants: all
+        PlantsTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - PlantsTests

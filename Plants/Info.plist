@@ -14,6 +14,17 @@
     <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>me.bn4t.plants.authentication</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>plants</string>
+            </array>
+        </dict>
+    </array>
     <key>CFBundleName</key>
     <string>$(PRODUCT_NAME)</string>
     <key>CFBundlePackageType</key>
@@ -25,9 +36,9 @@
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>NSCameraUsageDescription</key>
-    <string>Used to take a photo of your plant so we can identify it and suggest a watering schedule.</string>
+    <string>Used to photograph a plant for identification and its adaptive care plan.</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>Used to pick an existing photo of your plant.</string>
+    <string>Used to choose a plant photo for identification and its adaptive care plan.</string>
     <key>UIApplicationSceneManifest</key>
     <dict>
         <key>UIApplicationSupportsMultipleScenes</key>

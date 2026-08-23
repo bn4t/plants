@@ -1,77 +1,111 @@
 import Foundation
 import SwiftData
+import UIKit
 import UserNotifications
 
 final class NotificationService: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
     static let shared = NotificationService()
 
-    static let waterCategory = "WATER_REMINDER"
-    static let fertilizeCategory = "FERTILIZE_REMINDER"
-    static let markWateredAction = "MARK_WATERED"
-    static let markFertilizedAction = "MARK_FERTILIZED"
+    static let soilCheckCategory = "SOIL_CHECK_REMINDER"
+    static let dryAndWateredAction = "DRY_AND_WATERED"
+    static let stillDampAction = "STILL_DAMP"
+    static let remindTomorrowAction = "REMIND_TOMORROW"
 
     private var modelContainer: ModelContainer?
 
+    @MainActor
     func configureAtLaunch(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
         let center = UNUserNotificationCenter.current()
         center.delegate = self
 
-        let waterAction = UNNotificationAction(
-            identifier: Self.markWateredAction,
-            title: "Mark as watered",
-            options: []
+        let dry = UNNotificationAction(
+            identifier: Self.dryAndWateredAction,
+            title: "Dry, watered",
+            options: [.foreground]
         )
-        let fertilizeAction = UNNotificationAction(
-            identifier: Self.markFertilizedAction,
-            title: "Mark as fertilized",
-            options: []
+        let damp = UNNotificationAction(
+            identifier: Self.stillDampAction,
+            title: "Still damp",
+            options: [.foreground]
         )
-        let waterCategory = UNNotificationCategory(
-            identifier: Self.waterCategory,
-            actions: [waterAction],
-            intentIdentifiers: [],
-            options: []
+        let tomorrow = UNNotificationAction(
+            identifier: Self.remindTomorrowAction,
+            title: "Remind tomorrow",
+            options: [.foreground]
         )
-        let fertilizeCategory = UNNotificationCategory(
-            identifier: Self.fertilizeCategory,
-            actions: [fertilizeAction],
-            intentIdentifiers: [],
-            options: []
-        )
-
-        center.setNotificationCategories([waterCategory, fertilizeCategory])
+        center.setNotificationCategories([
+            UNNotificationCategory(
+                identifier: Self.soilCheckCategory,
+                actions: [dry, damp, tomorrow],
+                intentIdentifiers: [],
+                options: []
+            )
+        ])
     }
 
-    func requestPermissionIfNeeded() async -> Bool {
-        let center = UNUserNotificationCenter.current()
-        let settings = await center.notificationSettings()
+    func authorizationStatus() async -> UNAuthorizationStatus {
+        await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+    }
 
-        switch settings.authorizationStatus {
+    func requestPermission() async -> Bool {
+        let status = await authorizationStatus()
+        switch status {
         case .authorized, .provisional, .ephemeral:
             return true
         case .denied:
             return false
         case .notDetermined:
-            return (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+            return (try? await UNUserNotificationCenter.current().requestAuthorization(
+                options: [.alert, .sound, .badge]
+            )) ?? false
         @unknown default:
             return false
         }
     }
 
     @MainActor
-    func scheduleWater(for plant: Plant) async {
-        await scheduleWater(using: ReminderSnapshot(plant: plant))
+    func scheduleSoilCheck(
+        for plant: Plant,
+        settings: AppSettingsSnapshot,
+        now: Date = .now
+    ) async {
+        await schedule(snapshot: ReminderSnapshot(plant: plant), settings: settings, now: now)
     }
 
     @MainActor
-    func scheduleFertilize(for plant: Plant) async {
-        await scheduleFertilize(using: ReminderSnapshot(plant: plant))
+    func rescheduleAll(
+        for plants: [Plant],
+        settings: AppSettingsSnapshot,
+        now: Date = .now
+    ) async {
+        for plant in plants {
+            await schedule(snapshot: ReminderSnapshot(plant: plant), settings: settings, now: now)
+        }
     }
 
-    func cancelAll(for plantID: UUID) {
-        cancel(id: waterID(for: plantID))
-        cancel(id: fertilizeID(for: plantID))
+    func cancel(for plantID: UUID) {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(
+            withIdentifiers: [Self.notificationIdentifier(for: plantID)]
+        )
+    }
+
+    func cancelAllNotifications() {
+        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+    }
+
+    func scheduleTestNotification() async throws {
+        let content = UNMutableNotificationContent()
+        content.title = "Check your plant's soil"
+        content.body = "Water only if the potting mix has reached the recommended dryness."
+        content.sound = .default
+        content.categoryIdentifier = Self.soilCheckCategory
+        let request = UNNotificationRequest(
+            identifier: "test-\(UUID().uuidString)",
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false)
+        )
+        try await UNUserNotificationCenter.current().add(request)
     }
 
     func userNotificationCenter(
@@ -86,173 +120,115 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, @un
         didReceive response: UNNotificationResponse
     ) async {
         let userInfo = response.notification.request.content.userInfo
-        guard let plantIDString = userInfo["plantId"] as? String,
-              let plantID = UUID(uuidString: plantIDString)
+        guard let idString = userInfo["plantId"] as? String,
+              let plantID = UUID(uuidString: idString)
         else {
             return
         }
 
         switch response.actionIdentifier {
-        case Self.markWateredAction:
-            await applyAction(.water, to: plantID)
-        case Self.markFertilizedAction:
-            await applyAction(.fertilize, to: plantID)
+        case Self.dryAndWateredAction:
+            await apply(.dryAndWatered, to: plantID)
+        case Self.stillDampAction:
+            await apply(.stillDamp, to: plantID)
+        case Self.remindTomorrowAction:
+            await apply(.remindTomorrow, to: plantID)
+        case UNNotificationDefaultActionIdentifier:
+            await MainActor.run {
+                NotificationCenter.default.post(
+                    name: .plantNotificationOpened,
+                    object: nil,
+                    userInfo: ["plantId": plantID]
+                )
+            }
+        case UNNotificationDismissActionIdentifier:
+            break
         default:
-            NotificationCenter.default.post(
-                name: .plantNotificationOpened,
-                object: nil,
-                userInfo: ["plantId": plantID]
-            )
+            break
         }
     }
 
     private func schedule(
-        id: String,
-        category: String,
-        title: String,
-        body: String,
-        userInfo: [String: Any],
-        fireAt: Date
+        snapshot: ReminderSnapshot,
+        settings: AppSettingsSnapshot,
+        now: Date
     ) async {
+        let id = Self.notificationIdentifier(for: snapshot.id)
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [id])
+
+        guard let dueDate = snapshot.nextCareCheckDate, dueDate > now else {
+            return
+        }
+
+        var calendar = Calendar.current
+        calendar.timeZone = .current
+        var components = calendar.dateComponents([.year, .month, .day], from: dueDate)
+        components.hour = settings.reminderHour
+        components.minute = settings.reminderMinute
+
         let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
+        content.title = "Check \(snapshot.commonName)'s soil"
+        content.body = snapshot.wateringTrigger
         content.sound = .default
-        content.categoryIdentifier = category
-        content.userInfo = userInfo
-
-        let interval = max(fireAt.timeIntervalSinceNow, 60)
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
-        let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
-
-        try? await UNUserNotificationCenter.current().add(request)
-    }
-
-    private func cancel(id: String) {
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [id])
-    }
-
-    private func waterID(for plantID: UUID) -> String {
-        "\(plantID.uuidString)-water"
-    }
-
-    private func fertilizeID(for plantID: UUID) -> String {
-        "\(plantID.uuidString)-fertilize"
-    }
-
-    private func applyAction(_ action: PlantAction, to plantID: UUID) async {
-        guard let modelContainer else { return }
-
-        let context = ModelContext(modelContainer)
-        let descriptor = FetchDescriptor<Plant>(predicate: #Predicate<Plant> { plant in
-            plant.id == plantID
-        })
+        content.categoryIdentifier = Self.soilCheckCategory
+        content.interruptionLevel = .active
+        content.userInfo = ["plantId": snapshot.id.uuidString]
 
         do {
-            guard let plant = try context.fetch(descriptor).first else { return }
-            let snapshot = ReminderSnapshot(plant: plant)
-
-            switch action {
-            case .water:
-                plant.lastWatered = .now
-                try context.save()
-                await scheduleWater(using: snapshot.updating(nextWateringDate: plant.nextWateringDate))
-            case .fertilize:
-                plant.lastFertilized = .now
-                try context.save()
-                await scheduleFertilize(using: snapshot.updating(nextFertilizingDate: plant.nextFertilizingDate))
-            }
+            try await center.add(
+                UNNotificationRequest(
+                    identifier: id,
+                    content: content,
+                    trigger: UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+                )
+            )
         } catch {
-            print("Failed to apply plant action: \(error.localizedDescription)")
+            // Scheduling can legitimately fail when notifications are denied.
         }
     }
 
-    private enum PlantAction {
-        case water
-        case fertilize
+    @MainActor
+    private func apply(_ outcome: CareCheckOutcome, to plantID: UUID) async {
+        guard let modelContainer else { return }
+        let context = ModelContext(modelContainer)
+        let descriptor = FetchDescriptor<Plant>(predicate: #Predicate<Plant> { $0.id == plantID })
+        guard let plant = try? context.fetch(descriptor).first else { return }
+        let settings = AppSettings().snapshot
+        guard let receipt = try? await PlantCareActions.apply(
+            outcome,
+            to: plant,
+            settings: settings,
+            context: context
+        ) else { return }
+        NotificationCenter.default.post(
+            name: .plantCareActionCompleted,
+            object: receipt,
+            userInfo: ["plantId": plantID]
+        )
+    }
+
+    static func notificationIdentifier(for plantID: UUID) -> String {
+        "\(plantID.uuidString)-soil-check"
     }
 
     private struct ReminderSnapshot: Sendable {
         let id: UUID
         let commonName: String
         let wateringTrigger: String
-        let nextWateringDate: Date?
-        let fertilizingNotes: String
-        let nextFertilizingDate: Date?
+        let nextCareCheckDate: Date?
 
+        @MainActor
         init(plant: Plant) {
             id = plant.id
-            commonName = plant.commonName
-            wateringTrigger = plant.wateringTrigger
-            nextWateringDate = plant.nextWateringDate
-            fertilizingNotes = plant.fertilizingNotes
-            nextFertilizingDate = plant.nextFertilizingDate
+            commonName = plant.commonName.isEmpty ? "your plant" : plant.commonName
+            wateringTrigger = plant.soilCheckGuidance
+            nextCareCheckDate = plant.nextCareCheckDate
         }
-
-        func updating(nextWateringDate: Date? = nil, nextFertilizingDate: Date? = nil) -> ReminderSnapshot {
-            ReminderSnapshot(
-                id: id,
-                commonName: commonName,
-                wateringTrigger: wateringTrigger,
-                nextWateringDate: nextWateringDate ?? self.nextWateringDate,
-                fertilizingNotes: fertilizingNotes,
-                nextFertilizingDate: nextFertilizingDate ?? self.nextFertilizingDate
-            )
-        }
-
-        private init(
-            id: UUID,
-            commonName: String,
-            wateringTrigger: String,
-            nextWateringDate: Date?,
-            fertilizingNotes: String,
-            nextFertilizingDate: Date?
-        ) {
-            self.id = id
-            self.commonName = commonName
-            self.wateringTrigger = wateringTrigger
-            self.nextWateringDate = nextWateringDate
-            self.fertilizingNotes = fertilizingNotes
-            self.nextFertilizingDate = nextFertilizingDate
-        }
-    }
-
-    private func scheduleWater(using snapshot: ReminderSnapshot) async {
-        guard let next = snapshot.nextWateringDate else {
-            cancel(id: waterID(for: snapshot.id))
-            return
-        }
-        await schedule(
-            id: waterID(for: snapshot.id),
-            category: Self.waterCategory,
-            title: "Time to water \(snapshot.commonName)",
-            body: snapshot.wateringTrigger.isEmpty
-                ? "Tap to mark as watered."
-                : "\(snapshot.wateringTrigger). Tap to mark as watered.",
-            userInfo: ["plantId": snapshot.id.uuidString, "type": "water"],
-            fireAt: next
-        )
-    }
-
-    private func scheduleFertilize(using snapshot: ReminderSnapshot) async {
-        guard let next = snapshot.nextFertilizingDate else {
-            cancel(id: fertilizeID(for: snapshot.id))
-            return
-        }
-
-        await schedule(
-            id: fertilizeID(for: snapshot.id),
-            category: Self.fertilizeCategory,
-            title: "Time to fertilize \(snapshot.commonName)",
-            body: snapshot.fertilizingNotes.isEmpty
-                ? "Tap to mark as fertilized."
-                : "\(snapshot.fertilizingNotes). Tap to mark as fertilized.",
-            userInfo: ["plantId": snapshot.id.uuidString, "type": "fertilize"],
-            fireAt: next
-        )
     }
 }
 
 extension Notification.Name {
     static let plantNotificationOpened = Notification.Name("plantNotificationOpened")
+    static let plantCareActionCompleted = Notification.Name("plantCareActionCompleted")
 }

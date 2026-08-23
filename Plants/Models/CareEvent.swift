@@ -16,7 +16,16 @@ final class CareEvent {
     }
 }
 
-enum CareEventKind: String {
-    case water
-    case fertilize
+enum CareEventKind: String, CaseIterable, Codable, Sendable {
+    case watering = "water"
+    case fertilizing = "fertilize"
+    case soilCheckDamp
+
+    var systemImage: String {
+        switch self {
+        case .watering: "drop.fill"
+        case .fertilizing: "leaf.fill"
+        case .soilCheckDamp: "drop.degreesign"
+        }
+    }
 }
