@@ -22,6 +22,7 @@
 		3742DEDFB5864BA218BB33E3 /* CareCheckSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = DED40E74E7B34C0E8051E2B7 /* CareCheckSheet.swift */; };
 		4C4DA7B80AAAC97FAA8F0DBB /* PlantsApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDCAFB593ACBD8C6EBBF300A /* PlantsApp.swift */; };
 		56C142B98540FAB4573B9CB0 /* Season.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEB8F80D308CED3A153CD376 /* Season.swift */; };
+		576FE5B7EA5DD95D3AC763EE /* sample-plant.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 5D7D47F6D8E36799AD4C6959 /* sample-plant.jpg */; };
 		65BC3BBC3D396698D73336CB /* PlantDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CA3040829422D46F8E9B9D /* PlantDetailView.swift */; };
 		687D3A0E3FC7E51D013CC61A /* CareEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A11DBCA55DA55102855E0AC /* CareEvent.swift */; };
 		6D1D900286CF41A39CCEDDD4 /* Secrets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C32053C9E6953785F5AA2AB /* Secrets.swift */; };
@@ -69,6 +70,7 @@
 		46CF9AE0BEE4452972E72271 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		4A11DBCA55DA55102855E0AC /* CareEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CareEvent.swift; sourceTree = "<group>"; };
 		568C5CD0149C9908FEE176AA /* PlantListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlantListView.swift; sourceTree = "<group>"; };
+		5D7D47F6D8E36799AD4C6959 /* sample-plant.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = "sample-plant.jpg"; sourceTree = "<group>"; };
 		70A55AD07787027118F7FAAC /* LocalOAuthCallbackServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalOAuthCallbackServer.swift; sourceTree = "<group>"; };
 		74B964D26600C5008FAE54EE /* PlantHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlantHistoryView.swift; sourceTree = "<group>"; };
 		7BDC7053EC77E6615D2781D1 /* PlantsTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PlantsTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -116,6 +118,7 @@
 			isa = PBXGroup;
 			children = (
 				46ADF7131111530E8907D142 /* Assets.xcassets */,
+				5D7D47F6D8E36799AD4C6959 /* sample-plant.jpg */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -274,6 +277,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				83F6BF10538B5C47F47411E6 /* Assets.xcassets in Resources */,
+				576FE5B7EA5DD95D3AC763EE /* sample-plant.jpg in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -13,9 +13,21 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, @un
 
     private var modelContainer: ModelContainer?
 
+    /// Plant tapped open from a notification before the UI subscribed to
+    /// `plantNotificationOpened`; consumed by the shell once it appears.
+    @MainActor private(set) var pendingOpenedPlantID: UUID?
+
     @MainActor
-    func configureAtLaunch(modelContainer: ModelContainer) {
-        self.modelContainer = modelContainer
+    func consumePendingOpenedPlantID() -> UUID? {
+        defer { pendingOpenedPlantID = nil }
+        return pendingOpenedPlantID
+    }
+
+    @MainActor
+    func configureAtLaunch(modelContainer: ModelContainer?) {
+        if let modelContainer {
+            self.modelContainer = modelContainer
+        }
         let center = UNUserNotificationCenter.current()
         center.delegate = self
 
@@ -135,6 +147,9 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate, @un
             await apply(.remindTomorrow, to: plantID)
         case UNNotificationDefaultActionIdentifier:
             await MainActor.run {
+                // A cold-start tap can land before the shell subscribes —
+                // buffer the target so it is applied once the UI is ready.
+                pendingOpenedPlantID = plantID
                 NotificationCenter.default.post(
                     name: .plantNotificationOpened,
                     object: nil,

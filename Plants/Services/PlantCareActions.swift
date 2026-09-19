@@ -140,26 +140,32 @@ enum PlantCareActions {
 
         switch kind {
         case .watering:
-            plant.lastWatered = date
-            let recommendation = CareRecommendationEngine.recommendation(
-                for: plant.careInput(),
-                hemisphere: settings.hemisphere,
-                calendar: calendar,
-                now: date
-            )
-            plant.nextCareCheckDate = CareRecommendationEngine.reminderDate(
-                addingDays: recommendation.predictedIntervalDays,
-                to: date,
-                hour: settings.reminderHour,
-                minute: settings.reminderMinute,
-                calendar: calendar
-            )
+            // A backfilled watering records history only — it must not regress
+            // lastWatered or re-derive the schedule from a date in the past.
+            if date > (plant.lastWatered ?? .distantPast) {
+                plant.lastWatered = date
+                let recommendation = CareRecommendationEngine.recommendation(
+                    for: plant.careInput(),
+                    hemisphere: settings.hemisphere,
+                    calendar: calendar,
+                    now: date
+                )
+                plant.nextCareCheckDate = CareRecommendationEngine.reminderDate(
+                    addingDays: recommendation.predictedIntervalDays,
+                    to: date,
+                    hour: settings.reminderHour,
+                    minute: settings.reminderMinute,
+                    calendar: calendar
+                )
+            }
         case .fertilizing:
-            plant.lastFertilized = date
+            if date > (plant.lastFertilized ?? .distantPast) {
+                plant.lastFertilized = date
+            }
         case .soilCheckDamp:
             plant.nextCareCheckDate = CareRecommendationEngine.reminderDate(
                 addingDays: 1,
-                to: date,
+                to: max(date, .now),
                 hour: settings.reminderHour,
                 minute: settings.reminderMinute,
                 calendar: calendar
