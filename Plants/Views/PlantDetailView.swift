@@ -389,6 +389,9 @@ private struct ManualCareSheet: View {
                     }
                     .pickerStyle(.segmented)
                     DatePicker("Date", selection: $date, in: ...Date.now)
+                        // Inline calendar: the compact style's floating panel
+                        // overlaps the section below on iOS 26.
+                        .datePickerStyle(.graphical)
                 }
                 if kind == .fertilizing {
                     Section {
@@ -507,7 +510,8 @@ private struct PlantEditorSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { Task { await save() } }
-                        .disabled(commonName.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(commonName.trimmingCharacters(in: .whitespaces).isEmpty
+                                  || trigger.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
             .alert("Could not save changes", isPresented: Binding(
@@ -539,6 +543,23 @@ private struct PlantEditorSheet: View {
     }
 
     private func save() async {
+        // If the pending check sits exactly on the baseline anchor
+        // (lastWatered + predicted interval), re-derive it after edits so
+        // changed intervals actually move the reminder. A damp/snoozed check
+        // does not match the anchor and is left alone.
+        let previousAnchor = plant.lastWatered.map {
+            CareRecommendationEngine.reminderDate(
+                addingDays: CareRecommendationEngine.recommendation(
+                    for: plant.careInput(),
+                    hemisphere: settings.hemisphere
+                ).predictedIntervalDays,
+                to: $0,
+                hour: settings.reminderHour,
+                minute: settings.reminderMinute
+            )
+        }
+        let previousCheck = plant.nextCareCheckDate
+
         plant.commonName = commonName.trimmingCharacters(in: .whitespacesAndNewlines)
         plant.scientificName = scientificName.trimmingCharacters(in: .whitespacesAndNewlines)
         plant.wateringTrigger = trigger.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -546,6 +567,22 @@ private struct PlantEditorSheet: View {
         plant.fertilizingIntervalDays = fertilizerInterval
         plant.fertilizingNotes = fertilizerNotes.trimmingCharacters(in: .whitespacesAndNewlines)
         plant.growthState = growthState
+
+        if let previousAnchor,
+           let previousCheck,
+           abs(previousCheck.timeIntervalSince(previousAnchor)) < 2,
+           let lastWatered = plant.lastWatered {
+            plant.nextCareCheckDate = CareRecommendationEngine.reminderDate(
+                addingDays: CareRecommendationEngine.recommendation(
+                    for: plant.careInput(),
+                    hemisphere: settings.hemisphere
+                ).predictedIntervalDays,
+                to: lastWatered,
+                hour: settings.reminderHour,
+                minute: settings.reminderMinute
+            )
+        }
+
         do {
             try modelContext.save()
             await NotificationService.shared.scheduleSoilCheck(

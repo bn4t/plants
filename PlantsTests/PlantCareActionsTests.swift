@@ -131,6 +131,49 @@ final class PlantCareActionsTests: XCTestCase {
         XCTAssertTrue(events.isEmpty)
     }
 
+    func testBackfilledWateringDoesNotRegressSchedule() async throws {
+        let (container, context, plant) = try makeStore()
+        _ = container
+        let recent = date(2026, 8, 21)
+        let dueCheck = date(2026, 8, 31, 9)
+        plant.lastWatered = recent
+        plant.nextCareCheckDate = dueCheck
+        try context.save()
+
+        _ = try await PlantCareActions.logCare(
+            kind: .watering,
+            for: plant,
+            date: date(2026, 8, 10),
+            soilWasMoist: false,
+            settings: settings,
+            context: context
+        )
+
+        XCTAssertEqual(plant.lastWatered, recent)
+        XCTAssertEqual(plant.nextCareCheckDate, dueCheck)
+        XCTAssertEqual(plant.events.map(\.kind), [CareEventKind.watering.rawValue])
+    }
+
+    func testBackfilledFertilizingDoesNotRegressLastFertilized() async throws {
+        let (container, context, plant) = try makeStore()
+        _ = container
+        let recent = date(2026, 8, 21)
+        plant.lastFertilized = recent
+        try context.save()
+
+        _ = try await PlantCareActions.logCare(
+            kind: .fertilizing,
+            for: plant,
+            date: date(2026, 8, 10),
+            soilWasMoist: true,
+            settings: settings,
+            context: context
+        )
+
+        XCTAssertEqual(plant.lastFertilized, recent)
+        XCTAssertEqual(plant.events.map(\.kind), [CareEventKind.fertilizing.rawValue])
+    }
+
     func testManualFertilizerRejectsDryMedia() async throws {
         let (container, context, plant) = try makeStore()
         _ = container

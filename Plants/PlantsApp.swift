@@ -74,9 +74,9 @@ struct PlantsApp: App {
         let store = PlantStoreController()
         _settings = State(initialValue: settings)
         _store = State(initialValue: store)
-        if let container = store.container {
-            NotificationService.shared.configureAtLaunch(modelContainer: container)
-        }
+        // Configure the delegate even when the store failed to open so taps
+        // on pending notifications still reach the app.
+        NotificationService.shared.configureAtLaunch(modelContainer: store.container)
     }
 
     var body: some Scene {
@@ -98,6 +98,9 @@ private struct StoreHostView: View {
                 AppShellView()
                     .modelContainer(container)
                     .task {
+                        // The store can appear late (e.g. after a recovery
+                        // retry) — hand it to the notification service here.
+                        NotificationService.shared.configureAtLaunch(modelContainer: container)
                         await AppBootstrapper.prepare(container: container)
                     }
             } else {
@@ -200,7 +203,10 @@ enum AppBootstrapper {
         let existing = (try? context.fetch(FetchDescriptor<Plant>())) ?? []
         guard existing.isEmpty else { return }
 
-        let sampleData = try? Data(contentsOf: URL(fileURLWithPath: "/Users/ben/code/plant-app/sample-plant.jpg"))
+        let sampleURL = ProcessInfo.processInfo.environment["PLANTS_SEED_PHOTO"].map(URL.init(fileURLWithPath:))
+            ?? Bundle.main.url(forResource: "sample-plant", withExtension: "jpg")
+            ?? URL(fileURLWithPath: "/Users/ben/code/plant-app/sample-plant.jpg")
+        let sampleData = try? Data(contentsOf: sampleURL)
         let processed = sampleData.flatMap { data in
             UIImage(data: data).flatMap(PhotoProcessor.process)
         }

@@ -14,7 +14,6 @@ struct TodayView: View {
 
     @State private var selectedPlant: Plant?
     @State private var undoReceipt: CareActionReceipt?
-    @State private var undoPlant: Plant?
     @State private var errorMessage: String?
 
     private var recommendations: [(Plant, CareRecommendation)] {
@@ -68,21 +67,20 @@ struct TodayView: View {
             CareCheckSheet(plant: plant) { receipt in
                 withAnimation(reduceMotion ? nil : .snappy) {
                     undoReceipt = receipt
-                    undoPlant = plant
                 }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .plantCareActionCompleted)) { notification in
-            guard let receipt = notification.object as? CareActionReceipt,
-                  let plant = plants.first(where: { $0.id == receipt.plantID })
-            else { return }
+            guard let receipt = notification.object as? CareActionReceipt else { return }
             withAnimation(reduceMotion ? nil : .snappy) {
                 undoReceipt = receipt
-                undoPlant = plant
             }
         }
         .overlay(alignment: .bottom) {
-            if let receipt = undoReceipt, let plant = undoPlant {
+            // The plant is resolved at render time: on a cold start the query
+            // may still be empty when the notification lands.
+            if let receipt = undoReceipt,
+               let plant = plants.first(where: { $0.id == receipt.plantID }) {
                 CareToast(message: receipt.message) {
                     Task { await undo(receipt, for: plant) }
                 }
@@ -99,7 +97,6 @@ struct TodayView: View {
             }
             withAnimation(reduceMotion ? nil : .snappy) {
                 undoReceipt = nil
-                undoPlant = nil
             }
         }
         .alert("Care could not be updated", isPresented: Binding(
@@ -238,7 +235,6 @@ struct TodayView: View {
             )
             withAnimation(reduceMotion ? nil : .snappy) {
                 undoReceipt = nil
-                undoPlant = nil
             }
         } catch {
             errorMessage = error.localizedDescription

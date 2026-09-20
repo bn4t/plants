@@ -48,6 +48,7 @@ struct AddPlantView: View {
     @State private var errorMessage: String?
     @State private var notificationPrimerPlant: Plant?
     @State private var showingDiscardConfirmation = false
+    @State private var didIdentify = false
     @State private var authService = OpenRouterAuthService()
 
     var body: some View {
@@ -117,11 +118,7 @@ struct AddPlantView: View {
         } message: {
             Text(errorMessage ?? "")
         }
-        .confirmationDialog(
-            "Discard this plant?",
-            isPresented: $showingDiscardConfirmation,
-            titleVisibility: .visible
-        ) {
+        .alert("Discard this plant?", isPresented: $showingDiscardConfirmation) {
             Button("Discard Plant", role: .destructive) { dismiss() }
             Button("Keep Editing", role: .cancel) {}
         } message: {
@@ -252,7 +249,7 @@ struct AddPlantView: View {
                 }
             }
 
-            if draft.confidence == .low {
+            if didIdentify && draft.confidence == .low {
                 Section {
                     Label(
                         "Identification confidence is low. Check the name before saving.",
@@ -280,6 +277,7 @@ struct AddPlantView: View {
                 }
                 if lastWateredChoice == .anotherDate {
                     DatePicker("Date", selection: $lastWateredDate, in: ...Date.now, displayedComponents: .date)
+                        .datePickerStyle(.graphical)
                 }
                 Text(lastWateredChoice == .unknown
                      ? "Plants will ask you to check the soil today."
@@ -350,9 +348,9 @@ struct AddPlantView: View {
 
     private var hasProgress: Bool {
         switch step {
-        case .identifying, .confirm, .failed:
+        case .connect, .identifying, .confirm, .failed:
             true
-        case .choosePhoto, .connect:
+        case .choosePhoto:
             false
         }
     }
@@ -444,9 +442,13 @@ struct AddPlantView: View {
                 hemisphere: settings.hemisphere
             )
             draft = PlantDraft(identification: result)
+            didIdentify = true
             step = .confirm(photo)
         } catch is CancellationError {
-            return
+            // Leaving the step at .identifying would pin the spinner forever.
+            if case .identifying = step {
+                step = .failed(photo, "The request was cancelled.")
+            }
         } catch {
             step = .failed(photo, error.localizedDescription)
         }

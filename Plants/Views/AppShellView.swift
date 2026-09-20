@@ -65,6 +65,12 @@ struct AppShellView: View {
                 NavigationStack { SettingsView() }
             }
         }
+        .task {
+            if let id = NotificationService.shared.consumePendingOpenedPlantID() {
+                selectedTab = .today
+                todayPath = [id]
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .plantNotificationOpened)) { notification in
             guard let id = notification.userInfo?["plantId"] as? UUID else { return }
             selectedTab = .today
